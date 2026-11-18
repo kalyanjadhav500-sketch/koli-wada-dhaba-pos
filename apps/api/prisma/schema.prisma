@@ -1,0 +1,167 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  OWNER
+  CASHIER
+}
+
+enum TableStatus {
+  AVAILABLE
+  OCCUPIED
+}
+
+enum PricingType {
+  SINGLE
+  FULL_HALF
+  MANUAL
+}
+
+enum BillStatus {
+  OPEN
+  PAID
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  UPI
+  CARD
+}
+
+model User {
+  id           String     @id @default(cuid())
+  name         String
+  username     String     @unique
+  email        String?    @unique
+  passwordHash String
+  passwordResetCodeHash String?
+  passwordResetExpiresAt DateTime?
+  role         UserRole   @default(CASHIER)
+  active       Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  bills        Bill[]
+  auditLogs    AuditLog[]
+}
+
+model RestaurantSettings {
+  id              String   @id @default(cuid())
+  restaurantName  String   @default("KOLI WADA DHABA")
+  subtitle        String   @default("Family Seafood Restaurant")
+  upiId           String?
+  upiPayeeName    String?
+  receiptWidthMm  Int      @default(80)
+  updatedAt       DateTime @updatedAt
+}
+
+model RestaurantTable {
+  id        String      @id @default(cuid())
+  number    Int         @unique
+  status    TableStatus @default(AVAILABLE)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  bills     Bill[]
+}
+
+model MenuCategory {
+  id        String     @id @default(cuid())
+  name      String     @unique
+  sortOrder Int        @default(0)
+  active    Boolean    @default(true)
+  items     MenuItem[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+model MenuItem {
+  id          String     @id @default(cuid())
+  categoryId  String
+  category    MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  name        String
+  fullPrice   Decimal?   @db.Decimal(10, 2)
+  halfPrice   Decimal?   @db.Decimal(10, 2)
+  pricingType PricingType
+  manualPriceNote String?
+  active      Boolean    @default(true)
+  billItems   BillItem[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@unique([categoryId, name])
+  @@index([categoryId, active])
+}
+
+model Bill {
+  id             String      @id @default(cuid())
+  transactionId  String      @unique @default(cuid())
+  billNumber     String      @unique
+  tableId        String
+  table          RestaurantTable @relation(fields: [tableId], references: [id], onDelete: Restrict)
+  cashierId      String
+  cashier        User        @relation(fields: [cashierId], references: [id], onDelete: Restrict)
+  status         BillStatus  @default(OPEN)
+  customerName   String?
+  customerPhone  String?
+  subtotal       Decimal     @default(0) @db.Decimal(12, 2)
+  openedAt       DateTime    @default(now())
+  closedAt       DateTime?
+  items          BillItem[]
+  payments       Payment[]
+
+  @@index([tableId, status])
+  @@index([openedAt, status])
+}
+
+model BillItem {
+  id             String      @id @default(cuid())
+  billId         String
+  bill           Bill        @relation(fields: [billId], references: [id], onDelete: Restrict)
+  menuItemId     String?
+  menuItem       MenuItem?   @relation(fields: [menuItemId], references: [id], onDelete: SetNull)
+  itemName       String
+  size           String?
+  quantity       Int
+  unitPrice      Decimal     @db.Decimal(10, 2)
+  lineTotal      Decimal     @db.Decimal(12, 2)
+  createdAt      DateTime    @default(now())
+}
+
+model Payment {
+  id             String        @id @default(cuid())
+  idempotencyKey String        @unique
+  billId         String
+  bill           Bill          @relation(fields: [billId], references: [id], onDelete: Restrict)
+  method         PaymentMethod
+  amount         Decimal       @db.Decimal(12, 2)
+  confirmedAt    DateTime      @default(now())
+}
+
+model DailyClosing {
+  id          String   @id @default(cuid())
+  businessDate DateTime @unique @db.Date
+  closedById  String
+  cashTotal   Decimal  @default(0) @db.Decimal(12, 2)
+  upiTotal    Decimal  @default(0) @db.Decimal(12, 2)
+  cardTotal   Decimal  @default(0) @db.Decimal(12, 2)
+  createdAt   DateTime @default(now())
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action     String
+  entityType String
+  entityId   String?
+  details    Json?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}

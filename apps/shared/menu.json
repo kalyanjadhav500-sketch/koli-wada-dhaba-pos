@@ -1,0 +1,200 @@
+[
+  {
+    "name": "Veg Soups",
+    "sortOrder": 1,
+    "items": [
+      { "name": "Veg Manchow Soup", "pricingType": "FULL_HALF", "fullPrice": 120, "halfPrice": 100 },
+      { "name": "Veg Clear Soup", "pricingType": "FULL_HALF", "fullPrice": 120, "halfPrice": 100 },
+      { "name": "Veg Sweet Corn Soup", "pricingType": "FULL_HALF", "fullPrice": 120, "halfPrice": 100 },
+      { "name": "Veg Hot And Sour Soup", "pricingType": "FULL_HALF", "fullPrice": 120, "halfPrice": 100 },
+      { "name": "Veg Tom Yum Soup", "pricingType": "FULL_HALF", "fullPrice": 120, "halfPrice": 100 },
+      { "name": "Veg Noodle Soup", "pricingType": "FULL_HALF", "fullPrice": 120, "halfPrice": 100 }
+    ]
+  },
+  {
+    "name": "Non - Veg Soups",
+    "sortOrder": 2,
+    "items": [
+      { "name": "Chicken Manchow Soup", "pricingType": "FULL_HALF", "fullPrice": 160, "halfPrice": 120 },
+      { "name": "Chicken Clear Soup", "pricingType": "FULL_HALF", "fullPrice": 160, "halfPrice": 120 },
+      { "name": "Chicken Sweet Corn Soup", "pricingType": "FULL_HALF", "fullPrice": 160, "halfPrice": 120 },
+      { "name": "Chicken Hot and Sour Soup", "pricingType": "FULL_HALF", "fullPrice": 160, "halfPrice": 120 },
+      { "name": "Chicken Tom Yum Soup", "pricingType": "FULL_HALF", "fullPrice": 160, "halfPrice": 120 },
+      { "name": "Chicken Noodle Soup", "pricingType": "FULL_HALF", "fullPrice": 160, "halfPrice": 120 }
+    ]
+  },
+  {
+    "name": "Veg Starters",
+    "sortOrder": 3,
+    "items": [
+      { "name": "Paneer Chilly", "pricingType": "SINGLE", "fullPrice": 240, "halfPrice": null },
+      { "name": "Mushroom Chilly", "pricingType": "SINGLE", "fullPrice": 220, "halfPrice": null },
+      { "name": "Veg Manchurian", "pricingType": "SINGLE", "fullPrice": 200, "halfPrice": null },
+      { "name": "Veg Chilli", "pricingType": "SINGLE", "fullPrice": 200, "halfPrice": null },
+      { "name": "Veg Chinese Bhel", "pricingType": "SINGLE", "fullPrice": 200, "halfPrice": null },
+      { "name": "Paneer Crispy", "pricingType": "SINGLE", "fullPrice": 260, "halfPrice": null },
+      { "name": "Soyabin Chilli", "pricingType": "SINGLE", "fullPrice": 260, "halfPrice": null },
+      { "name": "Veg Crispy", "pricingType": "SINGLE", "fullPrice": 220, "halfPrice": null },
+      { "name": "Roasted Papad", "pricingType": "SINGLE", "fullPrice": 70, "halfPrice": null },
+      { "name": "Masala Papad", "pricingType": "SINGLE", "fullPrice": 90, "halfPrice": null },
+      { "name": "Paneer Kasturi", "pricingType": "SINGLE", "fullPrice": 320, "halfPrice": null }
+    ]
+  },
+  {
+    "name": "Egg Majedaar",
+    "sortOrder": 4,
+    "items": [
+      { "name": "Egg Omlette (Double Egg)", "pricingType": "SINGLE", "fullPrice": 80, "halfPrice": null },
+      { "name": "Egg Bhurji (Double Egg)", "pricingType": "SINGLE", "fullPrice": 100, "halfPrice": null },
+      { "name": "Egg Half Fry", "pricingType": "SINGLE", "fullPrice": 70, "halfPrice": null },
+      { "name": "Boiled Eggs", "pricingType": "SINGLE", "fullPrice": 70, "halfPrice": null }
+    ]
+  },
+  {
+    "name": "Veg Rice",
+    "sortOrder": 5,
+    "items": [
+      { "name": "Veg Fried Rice", "pricingType": "FULL_HALF", "fullPrice": 150, "halfPrice": 100 },
+      { "name": "Veg Schezwan Rice", "pricingType": "FULL_HALF", "fullPrice": 190, "halfPrice": 120 },
+      { "name": "Veg Triple Rice", "pricingType": "FULL_HALF", "fullPrice": 170, "halfPrice": 110 },
+      { "name": "Veg Manchurian Rice", "pricingType": "FULL_HALF", "fullPrice": 190, "halfPrice": 130 },
+      { "name": "Veg Singapore Rice", "pricingType": "FULL_HALF", "fullPrice": 190, "halfPrice": 110 },
+      { "name": "Veg Dragon Rice", "pricingType": "FULL_HALF", "fullPrice": 290, "halfPrice": null }
+    ]
+  },
+  {
+    "name": "Non - Veg Starters",
+    "sortOrder": 6,
+    "items": [
+      { "name": "Chicken Chilly (Bone)", "pricingType": "FULL_HALF", "fullPrice": 200, "halfPrice": 120 },
+      { "name": "Chicken Chilly (Boneless)", "pricingType": "FULL_HALF", "fullPrice": 220, "halfPrice": 140 },
+      { "name": "Chicken Chilly (Gravy)", "pricingType": "FULL_HALF", "fullPrice": 240, "halfPrice": 140 },
+      { "name": "Chicken Lollypop.", "pricingType": "FULL_HALF", "fullPrice": 220, "halfPrice": 140 },
+      { "name": "Chicken Lollypop (Gravy)", "pricingType": "FULL_HALF", "fullPrice": 240, "halfPrice": 150 },
+      { "name": "Chilly Lollypop", "pricingType": "FULL_HALF", "fullPrice": 240, "halfPrice": 150 },
+      { "name": "Chicken Schezwan", "pricingType": "FULL_HALF", "fullPrice": 220, "halfPrice": null },
+      { "name": "Chicken Kolivada Fry", "pricingType": "FULL_HALF", "fullPrice": 240, "halfPrice": null },
+      { "name": "Chicken Kolivada Boneless", "pricingType": "FULL_HALF", "fullPrice": 270, "halfPrice": null },
+      { "name": "Chicken Crispy", "pricingType": "FULL_HALF", "fullPrice": 260, "halfPrice": null },
+      { "name": "Chicken Manchurian", "pricingType": "FULL_HALF", "fullPrice": 220, "halfPrice": null },
+      { "name": "Chicken Garlic", "pricingType": "FULL_HALF", "fullPrice": 240, "halfPrice": null },
+      { "name": "Chicken Chinese Bhel", "pricingType": "FULL_HALF", "fullPrice": 220, "halfPrice": 140 },
+      { "name": "Liver Pota", "pricingType": "FULL_HALF", "fullPrice": 200, "halfPrice": 120 },
+      { "name": "Liver Pota (Gravy)", "pricingType": "FULL_HALF", "fullPrice": 220, "halfPrice": null },
+      { "name": "Mundi Masala", "pricingType": "FULL_HALF", "fullPrice": 220, "halfPrice": null },
+      { "name": "Paya Fry", "pricingType": "FULL_HALF", "fullPrice": 270, "halfPrice": null },
+      { "name": "Paya Masala", "pricingType": "FULL_HALF", "fullPrice": 270, "halfPrice": null },
+      { "name": "Wajdi Masala", "pricingType": "FULL_HALF", "fullPrice": 240, "halfPrice": null },
+      { "name": "Chicken 65", "pricingType": "FULL_HALF", "fullPrice": 240, "halfPrice": null },
+      { "name": "Chicken Kasturi", "pricingType": "FULL_HALF", "fullPrice": 300, "halfPrice": null },
+      { "name": "Chicken Double Ekka", "pricingType": "FULL_HALF", "fullPrice": 370, "halfPrice": null }
+    ]
+  },
+  {
+    "name": "Veg Noodles",
+    "sortOrder": 7,
+    "items": [
+      { "name": "Veg Hakka Noodles", "pricingType": "FULL_HALF", "fullPrice": 150, "halfPrice": 100 },
+      { "name": "Veg Schezwan Noodles", "pricingType": "FULL_HALF", "fullPrice": 190, "halfPrice": 120 },
+      { "name": "Veg Triple Noodles", "pricingType": "FULL_HALF", "fullPrice": 170, "halfPrice": 100 },
+      { "name": "Veg Manchurian Noodles", "pricingType": "FULL_HALF", "fullPrice": 190, "halfPrice": 120 },
+      { "name": "Veg Singapore Noodles", "pricingType": "FULL_HALF", "fullPrice": 190, "halfPrice": 120 },
+      { "name": "Veg Dragon Noodles", "pricingType": "FULL_HALF", "fullPrice": 290, "halfPrice": null }
+    ]
+  },
+  {
+    "name": "Tandoori Lajawab",
+    "sortOrder": 8,
+    "items": [
+      { "name": "Chicken Tandoori", "pricingType": "FULL_HALF", "fullPrice": 420, "halfPrice": 240 },
+      { "name": "Chicken Green Tandoori", "pricingType": "FULL_HALF", "fullPrice": 440, "halfPrice": 260 },
+      { "name": "Chicken Afghani Tandoori", "pricingType": "FULL_HALF", "fullPrice": 440, "halfPrice": 260 },
+      { "name": "Chicken Tikka", "pricingType": "FULL_HALF", "fullPrice": 260, "halfPrice": null },
+      { "name": "Chicken Tandoori Lollypop", "pricingType": "FULL_HALF", "fullPrice": 290, "halfPrice": null },
+      { "name": "Chicken Malai Tikka", "pricingType": "FULL_HALF", "fullPrice": 290, "halfPrice": null },
+      { "name": "Chicken Tangadi Kabab", "pricingType": "FULL_HALF", "fullPrice": 290, "halfPrice": null },
+      { "name": "Chicken Kakalmiri Kabab", "pricingType": "FULL_HALF", "fullPrice": 290, "halfPrice": null },
+      { "name": "Paneer Tikka", "pricingType": "FULL_HALF", "fullPrice": 240, "halfPrice": null }
+    ]
+  },
+  {
+    "name": "Seafood Starters",
+    "sortOrder": 9,
+    "items": [
+      { "name": "Mandeli Fry", "pricingType": "SINGLE", "fullPrice": 220, "halfPrice": null },
+      { "name": "Bombil Fry", "pricingType": "SINGLE", "fullPrice": 220, "halfPrice": null },
+      { "name": "Bangada Fry", "pricingType": "SINGLE", "fullPrice": 220, "halfPrice": null },
+      { "name": "Pompret Fry", "pricingType": "MANUAL", "fullPrice": null, "halfPrice": null, "manualPriceNote": "As Per Size" },
+      { "name": "Surmai Fry", "pricingType": "MANUAL", "fullPrice": null, "halfPrice": null, "manualPriceNote": "As Per Size" },
+      { "name": "Prawns Fry", "pricingType": "MANUAL", "fullPrice": null, "halfPrice": null, "manualPriceNote": "As Per Size" },
+      { "name": "Prawns Kolwada", "pricingType": "MANUAL", "fullPrice": null, "halfPrice": null, "manualPriceNote": "As Per Size" },
+      { "name": "Crabs Kolwada", "pricingType": "MANUAL", "fullPrice": null, "halfPrice": null, "manualPriceNote": "As Per Size" },
+      { "name": "Crab Chilly", "pricingType": "MANUAL", "fullPrice": null, "halfPrice": null, "manualPriceNote": "As Per Size" },
+      { "name": "Makali", "pricingType": "SINGLE", "fullPrice": 300, "halfPrice": null },
+      { "name": "Kalwa", "pricingType": "SINGLE", "fullPrice": 270, "halfPrice": null },
+      { "name": "Kolim Vadi", "pricingType": "SINGLE", "fullPrice": 170, "halfPrice": null },
+      { "name": "Kala Masa", "pricingType": "SINGLE", "fullPrice": 140, "halfPrice": null },
+      { "name": "Tengali", "pricingType": "SINGLE", "fullPrice": 150, "halfPrice": null },
+      { "name": "Sukha Bombil", "pricingType": "MANUAL", "fullPrice": null, "halfPrice": null, "manualPriceNote": "Price not printed on the menu" },
+      { "name": "Kardi", "pricingType": "MANUAL", "fullPrice": null, "halfPrice": null, "manualPriceNote": "Price not printed on the menu" },
+      { "name": "Sukhi Vaktl", "pricingType": "MANUAL", "fullPrice": null, "halfPrice": null, "manualPriceNote": "Price not printed on the menu" },
+      { "name": "Sukha Javla", "pricingType": "MANUAL", "fullPrice": null, "halfPrice": null, "manualPriceNote": "Price not printed on the menu" }
+    ]
+  },
+  {
+    "name": "Non - Veg Rice",
+    "sortOrder": 10,
+    "items": [
+      { "name": "Chicken Fried Rice", "pricingType": "FULL_HALF", "fullPrice": 180, "halfPrice": 110 },
+      { "name": "Chicken Triple Rice", "pricingType": "FULL_HALF", "fullPrice": 240, "halfPrice": 160 },
+      { "name": "Chicken Schezwan Rice", "pricingType": "FULL_HALF", "fullPrice": 190, "halfPrice": 120 },
+      { "name": "Chicken Manchurian Rice", "pricingType": "FULL_HALF", "fullPrice": 240, "halfPrice": 160 },
+      { "name": "Chicken Singapore Rice", "pricingType": "FULL_HALF", "fullPrice": 270, "halfPrice": 170 },
+      { "name": "Chicken Dragon Rice", "pricingType": "FULL_HALF", "fullPrice": 420, "halfPrice": null },
+      { "name": "Egg Fried Rice", "pricingType": "FULL_HALF", "fullPrice": 160, "halfPrice": 110 },
+      { "name": "Egg Triple Rice", "pricingType": "FULL_HALF", "fullPrice": 190, "halfPrice": 120 },
+      { "name": "Egg Schezwan Rice", "pricingType": "FULL_HALF", "fullPrice": 180, "halfPrice": 120 },
+      { "name": "Prawns Fried Rice", "pricingType": "FULL_HALF", "fullPrice": 240, "halfPrice": 140 },
+      { "name": "Prawns Triple Rice", "pricingType": "FULL_HALF", "fullPrice": 280, "halfPrice": 180 },
+      { "name": "Prawns Schezwan Rice", "pricingType": "FULL_HALF", "fullPrice": 250, "halfPrice": 150 }
+    ]
+  },
+  {
+    "name": "Indian - Curries",
+    "sortOrder": 11,
+    "items": [
+      { "name": "Chicken Masala", "pricingType": "FULL_HALF", "fullPrice": 220, "halfPrice": null },
+      { "name": "Chicken Mughlai", "pricingType": "FULL_HALF", "fullPrice": 270, "halfPrice": null },
+      { "name": "Chicken Hydrabadi", "pricingType": "FULL_HALF", "fullPrice": 270, "halfPrice": null },
+      { "name": "Chicken Kadhai", "pricingType": "FULL_HALF", "fullPrice": 220, "halfPrice": null },
+      { "name": "Chicken Handi", "pricingType": "FULL_HALF", "fullPrice": 570, "halfPrice": 370 },
+      { "name": "Chicken Kolhapuri", "pricingType": "FULL_HALF", "fullPrice": 220, "halfPrice": null },
+      { "name": "Chicken Lapeta", "pricingType": "FULL_HALF", "fullPrice": 270, "halfPrice": null },
+      { "name": "Liver Peth Masala", "pricingType": "FULL_HALF", "fullPrice": 240, "halfPrice": null },
+      { "name": "Tandoori Double Ekka", "pricingType": "SINGLE", "fullPrice": 400, "halfPrice": null }
+    ]
+  },
+  {
+    "name": "Indian - Noodles",
+    "sortOrder": 12,
+    "items": [
+      { "name": "Chicken Hakka Noodles", "pricingType": "FULL_HALF", "fullPrice": 180, "halfPrice": 100 },
+      { "name": "Chicken Triple Noodles", "pricingType": "FULL_HALF", "fullPrice": 240, "halfPrice": 160 },
+      { "name": "Chicken Schezwan Noodles", "pricingType": "FULL_HALF", "fullPrice": 190, "halfPrice": 120 },
+      { "name": "Chicken Manchurian Noodles", "pricingType": "FULL_HALF", "fullPrice": 240, "halfPrice": 170 },
+      { "name": "Chicken Singapore Noodles", "pricingType": "FULL_HALF", "fullPrice": 270, "halfPrice": 170 },
+      { "name": "Chicken Dragon Needles", "pricingType": "FULL_HALF", "fullPrice": 420, "halfPrice": null },
+      { "name": "Egg. Fried Noodles", "pricingType": "FULL_HALF", "fullPrice": 160, "halfPrice": 100 },
+      { "name": "Egg. Triple Noodles", "pricingType": "FULL_HALF", "fullPrice": 190, "halfPrice": 120 },
+      { "name": "Egg. Schezwan Noodles", "pricingType": "FULL_HALF", "fullPrice": 180, "halfPrice": 100 }
+    ]
+  },
+  {
+    "name": "Roti",
+    "sortOrder": 13,
+    "items": [
+      { "name": "Bhakari", "pricingType": "SINGLE", "fullPrice": 50, "halfPrice": null },
+      { "name": "Tandoori Roti", "pricingType": "SINGLE", "fullPrice": 40, "halfPrice": null }
+    ]
+  }
+]

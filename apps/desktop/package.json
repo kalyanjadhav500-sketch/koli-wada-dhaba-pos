@@ -1,0 +1,35 @@
+{
+  "name": "@koliwada/desktop",
+  "version": "0.1.2",
+  "private": true,
+  "main": "main.cjs",
+  "description": "Koli Wada Dhaba restaurant POS",
+  "author": "Koli Wada Dhaba",
+  "scripts": {
+    "dist:windows": "electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "45.3.3",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "in.koliwadadhaba.pos",
+    "productName": "Koli Wada Dhaba POS",
+    "directories": {
+      "output": "../../release/windows"
+    },
+    "files": [
+      "main.cjs",
+      "renderer/**/*"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}
