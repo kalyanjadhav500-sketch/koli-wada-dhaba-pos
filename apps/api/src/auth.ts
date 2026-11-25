@@ -1,5 +1,5 @@
 import bcrypt from "bcryptjs";
-import { createHmac, randomInt, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import type { Request, Response, NextFunction } from "express";
 import express from "express";
 import rateLimit from "express-rate-limit";
@@ -36,7 +36,11 @@ const credentialsSchema = z.object({
 });
 const setupSchema = credentialsSchema.extend({
   name: z.string().trim().min(2).max(80),
-  email: z.string().trim().email().max(254),
+});
+const offlineRecoveryConfirmSchema = z.object({
+  username: usernameSchema,
+  recoveryKey: z.string().trim().min(32).max(128),
+  password: passwordSchema,
 });
 const resetRequestSchema = z.object({
   username: usernameSchema,
@@ -76,6 +80,10 @@ function currentUser(user: AuthenticatedUser): AuthenticatedUser {
 
 function resetCodeHash(code: string): string {
   return createHmac("sha256", getJwtSecret()).update(code).digest("hex");
+}
+
+function recoveryKeyHash(recoveryKey: string): string {
+  return createHash("sha256").update(recoveryKey.trim().toUpperCase()).digest("hex");
 }
 
 function resetEmailTransport() {
@@ -126,24 +134,25 @@ export function createAuthRouter(prisma: PrismaClient): express.Router {
     const parsed = setupSchema.safeParse(request.body);
     if (!parsed.success) {
       response.status(400).json({
-        error: "Enter a valid owner name, username, recovery email, and password with at least 12 characters.",
+        error: "Enter a valid owner name, username, and password with at least 12 characters.",
       });
       return;
     }
 
     try {
       getJwtSecret();
-      const owner = await prisma.$transaction(async (transaction) => {
+      const setupResult = await prisma.$transaction(async (transaction) => {
         await transaction.$executeRaw`SELECT pg_advisory_xact_lock(744155180921)`;
         if ((await transaction.user.count()) !== 0) return null;
 
+        const recoveryKey = `KWD-${randomBytes(18).toString("hex").toUpperCase()}`;
         const created = await transaction.user.create({
           data: {
             name: parsed.data.name,
             username: parsed.data.username.toLowerCase(),
-            email: parsed.data.email.toLowerCase(),
             passwordHash: await bcrypt.hash(parsed.data.password, 12),
             role: "OWNER",
+            recoveryKeyHash: recoveryKeyHash(recoveryKey),
           },
         });
         await transaction.auditLog.create({
@@ -154,16 +163,21 @@ export function createAuthRouter(prisma: PrismaClient): express.Router {
             entityId: created.id,
           },
         });
-        return created;
+        return { owner: created, recoveryKey };
       });
 
-      if (!owner) {
+      if (!setupResult) {
         response.status(409).json({ error: "Owner setup has already been completed." });
         return;
       }
 
+      const { owner, recoveryKey } = setupResult;
       const user = currentUser(owner);
-      response.status(201).json({ user, token: issueToken(user) });
+      response.status(201).json({
+        user,
+        token: issueToken(user),
+        recoveryKey,
+      });
     } catch (error) {
       if (error instanceof Error && error.message.startsWith("JWT_SECRET")) {
         response.status(503).json({ error: "Authentication is not configured. Set JWT_SECRET before setup." });
@@ -297,6 +311,52 @@ export function createAuthRouter(prisma: PrismaClient): express.Router {
       }
       console.error("Owner password reset failed:", error);
       response.status(503).json({ error: "Password reset is temporarily unavailable." });
+    }
+  });
+
+  router.post("/offline-recovery/confirm", passwordResetRateLimit, async (request, response) => {
+    const parsed = offlineRecoveryConfirmSchema.safeParse(request.body);
+    if (!parsed.success) {
+      response.status(400).json({ error: "Enter the Owner username, recovery key, and a new 12-character password." });
+      return;
+    }
+
+    try {
+      const owner = await prisma.user.findFirst({
+        where: { username: parsed.data.username.toLowerCase(), role: "OWNER", active: true },
+        select: { id: true, recoveryKeyHash: true },
+      });
+      const suppliedHash = recoveryKeyHash(parsed.data.recoveryKey);
+      const storedHash = owner?.recoveryKeyHash ?? createHash("sha256").update(randomBytes(32)).digest("hex");
+      const suppliedBuffer = Buffer.from(suppliedHash, "hex");
+      const storedBuffer = Buffer.from(storedHash, "hex");
+      if (!owner?.recoveryKeyHash || suppliedBuffer.length !== storedBuffer.length ||
+          !timingSafeEqual(suppliedBuffer, storedBuffer)) {
+        response.status(400).json({ error: "The recovery key or username is invalid." });
+        return;
+      }
+
+      await prisma.$transaction(async (transaction) => {
+        await transaction.user.update({
+          where: { id: owner.id },
+          data: {
+            passwordHash: await bcrypt.hash(parsed.data.password, 12),
+            recoveryKeyHash: null,
+          },
+        });
+        await transaction.auditLog.create({
+          data: {
+            userId: owner.id,
+            action: "OWNER_OFFLINE_RECOVERY",
+            entityType: "User",
+            entityId: owner.id,
+          },
+        });
+      });
+      response.json({ message: "Password changed. Sign in with the new password." });
+    } catch (error) {
+      console.error("Offline Owner recovery failed:", error);
+      response.status(503).json({ error: "Offline recovery is temporarily unavailable." });
     }
   });
 

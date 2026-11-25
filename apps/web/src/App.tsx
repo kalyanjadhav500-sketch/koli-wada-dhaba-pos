@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import printedMenu from "../../shared/menu.json";
-import { ApiError, apiRequest, getApiBaseUrl, jsonBody, saveApiBaseUrl } from "./api";
+import { ApiError, apiRequest, jsonBody } from "./api";
 
 type TableStatus = "AVAILABLE" | "OCCUPIED";
 type RestaurantTable = {
@@ -127,6 +127,7 @@ function App() {
   const [billError, setBillError] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
+  const [oneTimeRecoveryKey, setOneTimeRecoveryKey] = useState("");
 
   function navigateTo(section: string): void {
     setActiveNav(section);
@@ -244,12 +245,13 @@ function App() {
     };
   }, [authToken, menuReload]);
 
-  async function onAuthenticated(result: { token: string; user: SignedInUser }): Promise<void> {
+  async function onAuthenticated(result: { token: string; user: SignedInUser; recoveryKey?: string }): Promise<void> {
     sessionStorage.setItem("kwd-token", result.token);
     setAuthUser(result.user);
     setAuthToken(result.token);
     setAuthError("");
     setSetupRequired(false);
+    if (result.recoveryKey) setOneTimeRecoveryKey(result.recoveryKey);
   }
 
   async function openTableBill(tableNumber: number, existingBillId?: string): Promise<void> {
@@ -450,6 +452,17 @@ function App() {
           ) : (
             <>
           {notice && <div className="app-alert success-alert">{notice}<button onClick={() => setNotice("")}>Dismiss</button></div>}
+          {oneTimeRecoveryKey && (
+            <div className="app-alert recovery-key-alert" role="alert">
+              <div>
+                <strong>Save this one-time Owner recovery key now.</strong>
+                <code>{oneTimeRecoveryKey}</code>
+                <span>Print or store it securely. It will not be shown again.</span>
+              </div>
+              <button onClick={() => window.print()}>Print key</button>
+              <button onClick={() => setOneTimeRecoveryKey("")}>I saved it</button>
+            </div>
+          )}
           {billError && <div className="app-alert">{billError}<button onClick={() => setBillError("")}>Dismiss</button></div>}
           <section className="welcome-row">
             <div>
@@ -637,19 +650,16 @@ function AuthenticationPage({
 }: {
   setupRequired: boolean;
   initialError: string;
-  onAuthenticated: (result: { token: string; user: SignedInUser }) => Promise<void>;
+  onAuthenticated: (result: { token: string; user: SignedInUser; recoveryKey?: string }) => Promise<void>;
 }) {
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
-  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [recoveryCode, setRecoveryCode] = useState("");
   const [error, setError] = useState(initialError);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
-  const [authMode, setAuthMode] = useState<"login" | "request-reset" | "confirm-reset">("login");
-  const [editingServer, setEditingServer] = useState(false);
-  const [serverAddress, setServerAddress] = useState(getApiBaseUrl() || window.location.origin);
+  const [authMode, setAuthMode] = useState<"login" | "offline-recovery">("login");
+  const [offlineRecoveryKey, setOfflineRecoveryKey] = useState("");
 
   useEffect(() => setError(initialError), [initialError]);
 
@@ -659,36 +669,25 @@ function AuthenticationPage({
     setError("");
     setNotice("");
     try {
-      if (!setupRequired && authMode === "request-reset") {
-        const result = await apiRequest<{ message: string }>("/auth/password-reset/request", undefined, {
+      if (!setupRequired && authMode === "offline-recovery") {
+        const result = await apiRequest<{ message: string }>("/auth/offline-recovery/confirm", undefined, {
           method: "POST",
-          body: jsonBody({ username, email }),
-        });
-        setNotice(result.message);
-        setAuthMode("confirm-reset");
-        return;
-      }
-
-      if (!setupRequired && authMode === "confirm-reset") {
-        const result = await apiRequest<{ message: string }>("/auth/password-reset/confirm", undefined, {
-          method: "POST",
-          body: jsonBody({ username, email, code: recoveryCode, password }),
+          body: jsonBody({ username, recoveryKey: offlineRecoveryKey, password }),
         });
         setNotice(result.message);
         setAuthMode("login");
-        setRecoveryCode("");
         setPassword("");
         return;
       }
 
-      const result = await apiRequest<{ token: string; user: SignedInUser }>(
+      const result = await apiRequest<{ token: string; user: SignedInUser; recoveryKey?: string }>(
         setupRequired ? "/auth/setup" : "/auth/login",
         undefined,
         {
           method: "POST",
           body: jsonBody(
             setupRequired
-              ? { name, username, email, password }
+              ? { name, username, password }
               : { username, password },
           ),
         },
@@ -715,18 +714,14 @@ function AuthenticationPage({
             ? "Set up your owner account."
             : authMode === "login"
               ? "Welcome back."
-              : authMode === "request-reset"
-                ? "Forgot your password?"
-                : "Enter your recovery code."}
+              : "Recover your owner password."}
         </h1>
         <p className="auth-description">
           {setupRequired
-            ? "Create the first owner login and add an email for password recovery."
+            ? "Create the first owner login and print the one-time offline recovery key."
             : authMode === "login"
               ? "Sign in with the username and password provided by your restaurant owner."
-              : authMode === "request-reset"
-                ? "Enter the Owner username and registered recovery email. We will send an 8-digit code."
-                : "Check the recovery email for the 8-digit code. It expires in 15 minutes."}
+              : "Enter the Owner username and your printed one-time recovery key."}
         </p>
         {error && <div className="app-alert auth-alert">{error}</div>}
         {notice && <div className="auth-notice" role="status">{notice}</div>}
@@ -741,31 +736,25 @@ function AuthenticationPage({
             <span>Username</span>
             <input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} minLength={3} maxLength={40} pattern="[A-Za-z0-9._-]+" required />
           </label>
-          {(setupRequired || authMode !== "login") && (
+          {authMode === "offline-recovery" && (
             <label>
-              <span>Recovery email</span>
-              <input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} maxLength={254} required />
+              <span>One-time recovery key</span>
+              <input autoComplete="off" value={offlineRecoveryKey} onChange={(event) => setOfflineRecoveryKey(event.target.value)} minLength={32} maxLength={128} required />
             </label>
           )}
-          {authMode === "confirm-reset" && (
+          {(setupRequired || authMode === "offline-recovery") && (
             <label>
-              <span>8-digit email code</span>
-              <input inputMode="numeric" autoComplete="one-time-code" value={recoveryCode} onChange={(event) => setRecoveryCode(event.target.value.replace(/\D/g, "").slice(0, 8))} pattern="[0-9]{8}" minLength={8} maxLength={8} required />
+              <span>{authMode === "offline-recovery" ? "New password" : "Password"}</span>
+              <input type="password" autoComplete={setupRequired || authMode === "offline-recovery" ? "new-password" : "current-password"} value={password} onChange={(event) => setPassword(event.target.value)} minLength={12} maxLength={128} required />
             </label>
           )}
-          {(setupRequired || authMode !== "request-reset") && (
-            <label>
-              <span>{authMode === "confirm-reset" ? "New password" : "Password"}</span>
-              <input type="password" autoComplete={setupRequired || authMode === "confirm-reset" ? "new-password" : "current-password"} value={password} onChange={(event) => setPassword(event.target.value)} minLength={12} maxLength={128} required />
-            </label>
-          )}
-          {(setupRequired || authMode === "confirm-reset") && <span className="auth-help">Use at least 12 characters. Passwords are stored as salted, one-way hashes.</span>}
+          {(setupRequired || authMode === "offline-recovery") && <span className="auth-help">Use at least 12 characters. Passwords are stored as salted, one-way hashes.</span>}
           <button className="primary-button auth-submit" disabled={busy}>
-            {busy ? "Please wait..." : setupRequired ? "Create owner account" : authMode === "login" ? "Sign in" : authMode === "request-reset" ? "Email recovery code" : "Change password"}
+            {busy ? "Please wait..." : setupRequired ? "Create owner account" : authMode === "login" ? "Sign in" : "Change password"}
           </button>
         </form>
         {!setupRequired && authMode === "login" && (
-          <button className="auth-link" type="button" onClick={() => { setError(""); setNotice(""); setAuthMode("request-reset"); }}>
+          <button className="auth-link" type="button" onClick={() => { setError(""); setNotice(""); setAuthMode("offline-recovery"); }}>
             Forgot password?
           </button>
         )}
@@ -774,28 +763,7 @@ function AuthenticationPage({
             Back to sign in
           </button>
         )}
-        {editingServer ? (
-          <form className="server-address-form" onSubmit={(event) => {
-            event.preventDefault();
-            try {
-              saveApiBaseUrl(serverAddress);
-              window.location.reload();
-            } catch (requestError) {
-              setError(requestError instanceof Error ? requestError.message : "Server address is invalid.");
-            }
-          }}>
-            <label>
-              <span>Restaurant server HTTPS address</span>
-              <input type="url" value={serverAddress} onChange={(event) => setServerAddress(event.target.value)} placeholder="https://your-server.example" required />
-            </label>
-            <button type="submit" className="auth-link">Save server address</button>
-          </form>
-        ) : (
-          <button className="auth-link server-address-link" type="button" onClick={() => setEditingServer(true)}>
-            Change server address
-          </button>
-        )}
-        <footer className="auth-footer">Your restaurant data stays with your configured backend.</footer>
+        <footer className="auth-footer">Your restaurant data stays on this Windows laptop.</footer>
       </section>
     </main>
   );
@@ -1084,6 +1052,20 @@ function SettingsPage({ token, user }: { token: string; user: SignedInUser }) {
   const [staffName, setStaffName] = useState("");
   const [staffUsername, setStaffUsername] = useState("");
   const [staffPassword, setStaffPassword] = useState("");
+  const [printers, setPrinters] = useState<{ name: string }[]>([]);
+  const [printerName, setPrinterName] = useState(
+    () => window.localStorage.getItem("kwd-printer-name") ?? "",
+  );
+
+  useEffect(() => {
+    const desktop = (window as typeof window & {
+      kwdDesktop?: { listPrinters: () => Promise<{ name: string }[]> };
+    }).kwdDesktop;
+    if (!desktop) return;
+    void desktop.listPrinters()
+      .then(setPrinters)
+      .catch((printerError: unknown) => console.error("Could not enumerate printers:", printerError));
+  }, []);
 
   async function loadSettingsAndUsers(): Promise<void> {
     const savedSettings = await apiRequest<RestaurantSettings>("/settings", token);
@@ -1197,6 +1179,30 @@ function SettingsPage({ token, user }: { token: string; user: SignedInUser }) {
               <label>UPI ID<input value={settings.upiId ?? ""} maxLength={120} placeholder="restaurant@bank" onChange={(event) => setSettings({ ...settings, upiId: event.target.value })} /></label>
               <label>UPI payee name<input value={settings.upiPayeeName ?? ""} maxLength={80} placeholder="Name verified in UPI app" onChange={(event) => setSettings({ ...settings, upiPayeeName: event.target.value })} /></label>
               <label className="receipt-width-setting">Thermal paper width<select value={settings.receiptWidthMm} onChange={(event) => setSettings({ ...settings, receiptWidthMm: Number(event.target.value) as 58 | 80 })}><option value={58}>58 mm</option><option value={80}>80 mm</option></select></label>
+              <label className="receipt-width-setting">Preferred Windows printer
+                <select value={printerName} onChange={(event) => {
+                  setPrinterName(event.target.value);
+                  window.localStorage.setItem("kwd-printer-name", event.target.value);
+                }}>
+                  <option value="">Use Windows selected printer</option>
+                  {printers.map((printer) => <option value={printer.name} key={printer.name}>{printer.name}</option>)}
+                </select>
+              </label>
+              <button type="button" className="primary-button auth-submit" disabled={!printerName && printers.length === 0} onClick={async () => {
+                const desktop = (window as typeof window & {
+                  kwdDesktop?: { testPrinter: (name: string) => Promise<void> };
+                }).kwdDesktop;
+                if (!desktop) {
+                  setError("Printer test is available only in the Windows desktop application.");
+                  return;
+                }
+                try {
+                  await desktop.testPrinter(printerName);
+                  setNotice("Test print sent to the selected printer.");
+                } catch (printerError) {
+                  setError(printerError instanceof Error ? printerError.message : "Test print could not be sent.");
+                }
+              }}>Test print</button>
               <button className="primary-button auth-submit" disabled={saving}>{saving ? "Saving..." : "Save settings"}</button>
             </form>
             <p className="menu-price-note">UPI payments are cashier-confirmed. Setting an ID does not verify a payment. Actual printer connectivity still needs testing with your printer model.</p>

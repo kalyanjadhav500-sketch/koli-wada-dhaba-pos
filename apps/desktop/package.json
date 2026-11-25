@@ -1,6 +1,6 @@
 {
   "name": "@koliwada/desktop",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "private": true,
   "main": "main.cjs",
   "description": "Koli Wada Dhaba restaurant POS",
@@ -20,16 +20,60 @@
     },
     "files": [
       "main.cjs",
+      "preload.cjs",
       "renderer/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "../../build-runtime/api",
+        "to": "api",
+        "filter": [
+          "dist/**/*",
+          "prisma/**/*",
+          "package.json",
+          "prisma.config.ts"
+        ]
+      },
+      {
+        "from": "../../build-runtime/api/node_modules",
+        "to": "api/node_modules"
+      },
+      {
+        "from": "../../build-runtime/postgresql17",
+        "to": "postgresql17",
+        "filter": [
+          "bin/**/*",
+          "lib/**/*",
+          "share/**/*",
+          "*license*.txt"
+        ]
+      },
+      {
+        "from": "../../build-runtime/installer-tools/node_modules",
+        "to": "installer-tools/node_modules"
+      },
+      {
+        "from": "../../build-runtime/installer",
+        "to": "installer"
+      },
+      {
+        "from": "../../build-runtime/shared",
+        "to": "shared"
+      }
+    ],
+    "compression": "normal",
     "win": {
       "target": "nsis"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
+      "include": "installer.nsh",
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "createStartMenuShortcut": true,
+      "perMachine": true,
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true
     }
   }
 }

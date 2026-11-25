@@ -1,0 +1,10 @@
+{
+  "name": "kwd-windows-installer-tools",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pinned Prisma migration and seed tooling used only during Windows installation",
+  "dependencies": {
+    "prisma": "7.10.1",
+    "tsx": "4.20.6"
+  }
+}

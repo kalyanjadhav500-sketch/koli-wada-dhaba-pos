@@ -33,11 +33,12 @@ if (-not $databaseUrl) {
 
 try {
     $connection = [uri]$databaseUrl
-    if ($connection.Scheme -notin @("postgres", "postgresql") -or -not $connection.Host) {
-        throw "The configured DATABASE_URL is not a valid PostgreSQL URL."
+    if ($connection.Scheme -notin @("postgres", "postgresql") -or
+        $connection.Host -notin @("localhost", "127.0.0.1", "::1")) {
+        throw "The local POS backup command accepts only a loopback PostgreSQL database."
     }
 } catch {
-    throw "DATABASE_URL is not a valid PostgreSQL connection URL."
+    throw "DATABASE_URL must be a loopback PostgreSQL connection URL."
 }
 
 $pgDump = Get-Command pg_dump.exe -ErrorAction SilentlyContinue

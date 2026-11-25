@@ -10,7 +10,9 @@ export class ApiError extends Error {
 
 const API_URL_STORAGE_KEY = "koliwada-api-url";
 const configuredApiUrl = import.meta.env.VITE_API_URL?.trim();
-const DEFAULT_API_URL = configuredApiUrl || (import.meta.env.PROD ? "" : "http://localhost:4000");
+const DEFAULT_API_URL =
+  configuredApiUrl ||
+  (window.location.protocol === "koliwada:" ? "http://127.0.0.1:4000" : "http://localhost:4000");
 
 export function getApiBaseUrl(): string {
   const savedUrl = window.localStorage.getItem(API_URL_STORAGE_KEY);

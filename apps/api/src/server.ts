@@ -10,9 +10,35 @@ import { Pool } from "pg";
 import { PrismaClient } from "@prisma/client";
 import { createAuthentication, createAuthRouter } from "./auth";
 import { createBusinessRouter } from "./business";
+import { execFileSync } from "node:child_process";
 
 dotenv.config({ path: "../../.env" });
 
+function loadLocalProtectedConfig(): void {
+  const configPath = process.env.KWD_DPAPI_CONFIG;
+  if (process.env.LOCAL_POS_APP !== "1" || !configPath) return;
+  if (!existsSync(configPath)) {
+    throw new Error("The protected local database configuration is missing.");
+  }
+  const encoded = execFileSync(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      `$b=[IO.File]::ReadAllBytes('${configPath.replaceAll("'", "''")}'); Add-Type -AssemblyName System.Security; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); [Console]::Write([Text.Encoding]::UTF8.GetString([Security.Cryptography.ProtectedData]::Unprotect($b,$null,[Security.Cryptography.DataProtectionScope]::LocalMachine)))`,
+    ],
+    { encoding: "utf8", windowsHide: true, timeout: 15_000 },
+  );
+  const config = JSON.parse(encoded) as Record<string, unknown>;
+  for (const [name, value] of Object.entries(config)) {
+    if (typeof value === "string") process.env[name] = value;
+  }
+}
+
+loadLocalProtectedConfig();
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
   if (process.env.NODE_ENV === "production") {
@@ -29,10 +55,16 @@ if (!databaseUrl) {
   if (!["postgres:", "postgresql:"].includes(parsedDatabaseUrl.protocol)) {
     throw new Error("DATABASE_URL must use PostgreSQL.");
   }
-  if (["localhost", "127.0.0.1", "::1"].includes(parsedDatabaseUrl.hostname)) {
+  if (
+    process.env.LOCAL_POS_APP !== "1" &&
+    ["localhost", "127.0.0.1", "::1"].includes(parsedDatabaseUrl.hostname)
+  ) {
     throw new Error("Production DATABASE_URL must point to a remote database.");
   }
-  if (!["require", "verify-ca", "verify-full"].includes(parsedDatabaseUrl.searchParams.get("sslmode") ?? "")) {
+  if (
+    process.env.LOCAL_POS_APP !== "1" &&
+    !["require", "verify-ca", "verify-full"].includes(parsedDatabaseUrl.searchParams.get("sslmode") ?? "")
+  ) {
     throw new Error("Production DATABASE_URL must require TLS using sslmode=require or stronger.");
   }
 }
