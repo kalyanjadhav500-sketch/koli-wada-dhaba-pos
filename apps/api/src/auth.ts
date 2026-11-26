@@ -1,10 +1,9 @@
 import bcrypt from "bcryptjs";
-import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Request, Response, NextFunction } from "express";
 import express from "express";
 import rateLimit from "express-rate-limit";
 import jwt, { type JwtPayload } from "jsonwebtoken";
-import nodemailer from "nodemailer";
 import { z } from "zod";
 import type { PrismaClient, UserRole } from "@prisma/client";
 
@@ -42,15 +41,6 @@ const offlineRecoveryConfirmSchema = z.object({
   recoveryKey: z.string().trim().min(32).max(128),
   password: passwordSchema,
 });
-const resetRequestSchema = z.object({
-  username: usernameSchema,
-  email: z.string().trim().email().max(254),
-});
-const resetConfirmSchema = resetRequestSchema.extend({
-  code: z.string().regex(/^\d{8}$/),
-  password: passwordSchema,
-});
-const resetCodeLifetimeMs = 15 * 60 * 1000;
 
 function getJwtSecret(): string {
   const secret = process.env.JWT_SECRET;
@@ -78,32 +68,8 @@ function currentUser(user: AuthenticatedUser): AuthenticatedUser {
   };
 }
 
-function resetCodeHash(code: string): string {
-  return createHmac("sha256", getJwtSecret()).update(code).digest("hex");
-}
-
 function recoveryKeyHash(recoveryKey: string): string {
   return createHash("sha256").update(recoveryKey.trim().toUpperCase()).digest("hex");
-}
-
-function resetEmailTransport() {
-  const host = process.env.SMTP_HOST;
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  const from = process.env.SMTP_FROM ?? user;
-  const port = Number(process.env.SMTP_PORT ?? 465);
-  if (!host || !user || !pass || !from || !Number.isInteger(port) || port < 1 || port > 65535) {
-    return null;
-  }
-  return {
-    from,
-    transport: nodemailer.createTransport({
-      host,
-      port,
-      secure: process.env.SMTP_SECURE !== "false",
-      auth: { user, pass },
-    }),
-  };
 }
 
 export function createAuthRouter(prisma: PrismaClient): express.Router {
@@ -114,7 +80,7 @@ export function createAuthRouter(prisma: PrismaClient): express.Router {
     standardHeaders: "draft-8",
     legacyHeaders: false,
   });
-  const passwordResetRateLimit = rateLimit({
+  const offlineRecoveryRateLimit = rateLimit({
     windowMs: 15 * 60 * 1000,
     limit: 5,
     standardHeaders: "draft-8",
@@ -145,6 +111,7 @@ export function createAuthRouter(prisma: PrismaClient): express.Router {
         await transaction.$executeRaw`SELECT pg_advisory_xact_lock(744155180921)`;
         if ((await transaction.user.count()) !== 0) return null;
 
+        // The recovery key is shown once to the Owner. Only its SHA-256 hash is stored.
         const recoveryKey = `KWD-${randomBytes(18).toString("hex").toUpperCase()}`;
         const created = await transaction.user.create({
           data: {
@@ -188,73 +155,14 @@ export function createAuthRouter(prisma: PrismaClient): express.Router {
     }
   });
 
-  router.post("/password-reset/request", passwordResetRateLimit, async (request, response) => {
-    const parsed = resetRequestSchema.safeParse(request.body);
+  // Offline recovery deliberately has no SMTP, email, internet, or external-service dependency.
+  // The one-time key is generated during first-Owner setup and consumed atomically here.
+  router.post("/offline-recovery/confirm", offlineRecoveryRateLimit, async (request, response) => {
+    const parsed = offlineRecoveryConfirmSchema.safeParse(request.body);
     if (!parsed.success) {
-      response.status(400).json({ error: "Enter a valid username and email address." });
-      return;
-    }
-
-    const emailConfig = resetEmailTransport();
-    if (!emailConfig) {
-      response.status(503).json({ error: "Email password recovery is not configured. Contact the app administrator." });
-      return;
-    }
-
-    const genericMessage = "If the Owner account matches those details, an 8-digit recovery code has been emailed.";
-    try {
-      const owner = await prisma.user.findFirst({
-        where: {
-          username: parsed.data.username.toLowerCase(),
-          email: parsed.data.email.toLowerCase(),
-          role: "OWNER",
-          active: true,
-        },
-        select: { id: true, email: true },
+      response.status(400).json({
+        error: "Enter the Owner username, recovery key, and a new 12-character password.",
       });
-      if (!owner?.email) {
-        response.json({ message: genericMessage });
-        return;
-      }
-
-      const code = randomInt(0, 100_000_000).toString().padStart(8, "0");
-      const codeHash = resetCodeHash(code);
-      const expiresAt = new Date(Date.now() + resetCodeLifetimeMs);
-      await prisma.user.update({
-        where: { id: owner.id },
-        data: { passwordResetCodeHash: codeHash, passwordResetExpiresAt: expiresAt },
-      });
-      try {
-        await emailConfig.transport.sendMail({
-          from: emailConfig.from,
-          to: owner.email,
-          subject: "Koli Wada Dhaba POS password reset",
-          text: `Your password reset code is ${code}. It expires in 15 minutes. If you did not request this, ignore this email.`,
-        });
-      } catch (error) {
-        await prisma.user.updateMany({
-          where: { id: owner.id, passwordResetCodeHash: codeHash },
-          data: { passwordResetCodeHash: null, passwordResetExpiresAt: null },
-        });
-        console.error("Could not send Owner password reset email:", error);
-        response.status(503).json({ error: "Could not send the recovery email. Check the email configuration and try again." });
-        return;
-      }
-      response.json({ message: genericMessage });
-    } catch (error) {
-      if (error instanceof Error && error.message.startsWith("JWT_SECRET")) {
-        response.status(503).json({ error: "Password recovery is not configured correctly." });
-        return;
-      }
-      console.error("Owner password reset request failed:", error);
-      response.status(503).json({ error: "Password recovery is temporarily unavailable." });
-    }
-  });
-
-  router.post("/password-reset/confirm", passwordResetRateLimit, async (request, response) => {
-    const parsed = resetConfirmSchema.safeParse(request.body);
-    if (!parsed.success) {
-      response.status(400).json({ error: "Enter a valid username, email, 8-digit code, and password with at least 12 characters." });
       return;
     }
 
@@ -262,88 +170,47 @@ export function createAuthRouter(prisma: PrismaClient): express.Router {
       const owner = await prisma.user.findFirst({
         where: {
           username: parsed.data.username.toLowerCase(),
-          email: parsed.data.email.toLowerCase(),
           role: "OWNER",
           active: true,
         },
-        select: { id: true, passwordResetCodeHash: true, passwordResetExpiresAt: true },
+        select: { id: true, recoveryKeyHash: true },
       });
-      const suppliedHash = Buffer.from(resetCodeHash(parsed.data.code), "hex");
+
+      const suppliedHash = recoveryKeyHash(parsed.data.recoveryKey);
+      const storedRecoveryKeyHash = owner?.recoveryKeyHash;
       const storedHash =
-        owner?.passwordResetCodeHash && /^[a-f0-9]{64}$/i.test(owner.passwordResetCodeHash)
-          ? Buffer.from(owner.passwordResetCodeHash, "hex")
-          : Buffer.alloc(32);
-      const codeMatches = timingSafeEqual(suppliedHash, storedHash);
-      if (!owner || !codeMatches || !owner.passwordResetExpiresAt || owner.passwordResetExpiresAt <= new Date()) {
-        response.status(400).json({ error: "The recovery code is invalid or expired. Request a new code." });
+        storedRecoveryKeyHash && /^[a-f0-9]{64}$/i.test(storedRecoveryKeyHash)
+          ? storedRecoveryKeyHash
+          : createHash("sha256").update(randomBytes(32)).digest("hex");
+      const suppliedBuffer = Buffer.from(suppliedHash, "hex");
+      const storedBuffer = Buffer.from(storedHash, "hex");
+      const keyMatches = timingSafeEqual(suppliedBuffer, storedBuffer);
+
+      if (!owner || !storedRecoveryKeyHash || !keyMatches) {
+        response.status(400).json({ error: "The recovery key or username is invalid, or the key has already been used." });
         return;
       }
 
       await prisma.$transaction(async (transaction) => {
+        // Conditional update makes the one-time recovery key single-use even if
+        // two recovery requests arrive at nearly the same time.
         const updated = await transaction.user.updateMany({
           where: {
             id: owner.id,
-            passwordResetCodeHash: owner.passwordResetCodeHash,
-            passwordResetExpiresAt: { gt: new Date() },
+            role: "OWNER",
+            active: true,
+            recoveryKeyHash: storedRecoveryKeyHash,
           },
-          data: {
-            passwordHash: await bcrypt.hash(parsed.data.password, 12),
-            passwordResetCodeHash: null,
-            passwordResetExpiresAt: null,
-          },
-        });
-        if (updated.count !== 1) {
-          throw new Error("The recovery code is invalid or expired. Request a new code.");
-        }
-        await transaction.auditLog.create({
-          data: { userId: owner.id, action: "OWNER_PASSWORD_RESET", entityType: "User", entityId: owner.id },
-        });
-      });
-      response.json({ message: "Password changed. Sign in with your new password." });
-    } catch (error) {
-      if (error instanceof Error && error.message.startsWith("JWT_SECRET")) {
-        response.status(503).json({ error: "Password recovery is not configured correctly." });
-        return;
-      }
-      if (error instanceof Error && error.message.startsWith("The recovery code")) {
-        response.status(400).json({ error: error.message });
-        return;
-      }
-      console.error("Owner password reset failed:", error);
-      response.status(503).json({ error: "Password reset is temporarily unavailable." });
-    }
-  });
-
-  router.post("/offline-recovery/confirm", passwordResetRateLimit, async (request, response) => {
-    const parsed = offlineRecoveryConfirmSchema.safeParse(request.body);
-    if (!parsed.success) {
-      response.status(400).json({ error: "Enter the Owner username, recovery key, and a new 12-character password." });
-      return;
-    }
-
-    try {
-      const owner = await prisma.user.findFirst({
-        where: { username: parsed.data.username.toLowerCase(), role: "OWNER", active: true },
-        select: { id: true, recoveryKeyHash: true },
-      });
-      const suppliedHash = recoveryKeyHash(parsed.data.recoveryKey);
-      const storedHash = owner?.recoveryKeyHash ?? createHash("sha256").update(randomBytes(32)).digest("hex");
-      const suppliedBuffer = Buffer.from(suppliedHash, "hex");
-      const storedBuffer = Buffer.from(storedHash, "hex");
-      if (!owner?.recoveryKeyHash || suppliedBuffer.length !== storedBuffer.length ||
-          !timingSafeEqual(suppliedBuffer, storedBuffer)) {
-        response.status(400).json({ error: "The recovery key or username is invalid." });
-        return;
-      }
-
-      await prisma.$transaction(async (transaction) => {
-        await transaction.user.update({
-          where: { id: owner.id },
           data: {
             passwordHash: await bcrypt.hash(parsed.data.password, 12),
             recoveryKeyHash: null,
           },
         });
+
+        if (updated.count !== 1) {
+          throw new Error("The recovery key is invalid, or it has already been used.");
+        }
+
         await transaction.auditLog.create({
           data: {
             userId: owner.id,
@@ -353,8 +220,15 @@ export function createAuthRouter(prisma: PrismaClient): express.Router {
           },
         });
       });
-      response.json({ message: "Password changed. Sign in with the new password." });
+
+      response.json({
+        message: "Password changed. Sign in with the new password. The one-time recovery key has been used and cannot be used again.",
+      });
     } catch (error) {
+      if (error instanceof Error && error.message.startsWith("The recovery key")) {
+        response.status(400).json({ error: error.message });
+        return;
+      }
       console.error("Offline Owner recovery failed:", error);
       response.status(503).json({ error: "Offline recovery is temporarily unavailable." });
     }

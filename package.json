@@ -12,20 +12,10 @@
     "build": "npm run build --workspace @koliwada/api && npm run build --workspace @koliwada/web",
     "db:generate": "npm run db:generate --workspace @koliwada/api",
     "db:deploy": "npm run db:deploy --workspace @koliwada/api",
-    "db:bootstrap": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bootstrap-postgres.ps1",
     "db:migrate": "npm run db:migrate --workspace @koliwada/api",
     "db:seed": "npm run db:seed --workspace @koliwada/api",
-    "db:up": "docker compose up -d db",
-    "db:down": "docker compose down",
-    "db:restore": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/restore-postgres.ps1",
-    "env:init": "node scripts/init-env.cjs",
-    "email:recovery-configure": "node scripts/configure-gmail-smtp.cjs",
-    "owner:password-reset": "node scripts/reset-owner-password.cjs",
     "desktop:prepare": "npm run build --workspace @koliwada/web && node scripts/prepare-desktop.cjs",
-    "desktop:installer": "npm run desktop:prepare && npm run build --workspace @koliwada/api && node scripts/stage-windows-runtime.cjs && npm run dist:windows --workspace @koliwada/desktop",
-    "android:sync": "npm run build --workspace @koliwada/web && npm run cap:sync --workspace @koliwada/web",
-    "android:debug": "npm run android:debug --workspace @koliwada/web",
-    "backup:postgres": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/backup-postgres.ps1"
+    "desktop:installer": "npm run desktop:prepare && npm run build --workspace @koliwada/api && node scripts/stage-windows-runtime.cjs && npm run dist:windows --workspace @koliwada/desktop"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

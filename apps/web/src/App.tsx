@@ -28,6 +28,30 @@ import { QRCodeSVG } from "qrcode.react";
 import printedMenu from "../../shared/menu.json";
 import { ApiError, apiRequest, jsonBody } from "./api";
 
+type KwdDesktopBridge = {
+  listPrinters: () => Promise<{ name: string }[]>;
+  testPrinter: (printerName?: string) => Promise<void>;
+  printCurrentView: (printerName?: string) => Promise<void>;
+};
+
+declare global {
+  interface Window {
+    kwdDesktop?: KwdDesktopBridge;
+  }
+}
+
+/** Print the prepared receipt/report through the selected Windows printer.
+ *  Browser-based development retains the normal browser print dialog.
+ */
+async function printPosCurrentView(): Promise<void> {
+  const printerName = window.localStorage.getItem("kwd-printer-name") ?? "";
+  if (window.kwdDesktop) {
+    await window.kwdDesktop.printCurrentView(printerName);
+    return;
+  }
+  window.print();
+}
+
 type TableStatus = "AVAILABLE" | "OCCUPIED";
 type RestaurantTable = {
   number: number;
@@ -1058,9 +1082,7 @@ function SettingsPage({ token, user }: { token: string; user: SignedInUser }) {
   );
 
   useEffect(() => {
-    const desktop = (window as typeof window & {
-      kwdDesktop?: { listPrinters: () => Promise<{ name: string }[]> };
-    }).kwdDesktop;
+    const desktop = window.kwdDesktop;
     if (!desktop) return;
     void desktop.listPrinters()
       .then(setPrinters)
@@ -1189,9 +1211,7 @@ function SettingsPage({ token, user }: { token: string; user: SignedInUser }) {
                 </select>
               </label>
               <button type="button" className="primary-button auth-submit" disabled={!printerName && printers.length === 0} onClick={async () => {
-                const desktop = (window as typeof window & {
-                  kwdDesktop?: { testPrinter: (name: string) => Promise<void> };
-                }).kwdDesktop;
+                const desktop = window.kwdDesktop;
                 if (!desktop) {
                   setError("Printer test is available only in the Windows desktop application.");
                   return;
@@ -1306,7 +1326,12 @@ function ReportsPage({ token }: { token: string }) {
     try {
       setReceipt(await apiRequest<ReceiptBill>(`/bills/${bill.id}`, token));
       setPrintMode("receipt");
-      window.setTimeout(() => window.print(), 100);
+      window.setTimeout(() => {
+        void printPosCurrentView().catch((printError: unknown) => {
+          console.error("Could not print the receipt:", printError);
+          setError(printError instanceof Error ? printError.message : "Could not print this receipt.");
+        });
+      }, 150);
     } catch (receiptError) {
       console.error("Could not retrieve the bill for printing:", receiptError);
       setError(receiptError instanceof Error ? receiptError.message : "Could not open this receipt.");
@@ -1332,7 +1357,15 @@ function ReportsPage({ token }: { token: string }) {
         <div className="panel-heading"><div><div className="panel-kicker">AUDIT HISTORY</div><div className="panel-title-row"><h2>Cancelled bills</h2><span className="total-badge">{todaysCancelledBills.length} on selected date</span></div></div></div>
         {todaysCancelledBills.length ? <div className="bill-history-list">{todaysCancelledBills.map((bill) => <article className="history-bill-row cancelled-history-row" key={bill.id}><div><strong>{bill.billNumber}</strong><span>Table {bill.table.number} · Cancelled · {bill.closedAt ? new Date(bill.closedAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : ""}</span></div><strong>{formatCurrency(bill.subtotal)}</strong></article>)}</div> : <p className="report-empty">No cancelled bills recorded for this date.</p>}
       </section>
-      <button className="subtle-button report-print-button" disabled={!report} onClick={() => { setPrintMode("report"); window.setTimeout(() => window.print(), 100); }}>Print report / Save as PDF <ArrowRight size={14} /></button>
+      <button className="subtle-button report-print-button" disabled={!report} onClick={() => {
+        setPrintMode("report");
+        window.setTimeout(() => {
+          void printPosCurrentView().catch((printError: unknown) => {
+            console.error("Could not print the daily report:", printError);
+            setError(printError instanceof Error ? printError.message : "Could not print this report.");
+          });
+        }, 150);
+      }}>Print report / Save as PDF <ArrowRight size={14} /></button>
       {receipt && settings && <ReceiptPrint receipt={receipt} settings={settings} />}
       {report && settings && <ReportPrint report={report} />}
     </div>
