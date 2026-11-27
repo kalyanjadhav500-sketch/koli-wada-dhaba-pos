@@ -19,6 +19,8 @@ const nsisIncludePath = path.join(workspace, "apps", "desktop", "installer.nsh")
 const REQUIRED_WINDOWS_SCRIPTS = [
   "Install-LocalPos.ps1",
   "Backup-LocalPos.ps1",
+  "Restore-LocalPos.ps1",
+  "Pos-Maintenance-Broker.ps1",
   "Uninstall-LocalPos.ps1",
 ];
 
@@ -131,6 +133,14 @@ function verifyInstallerSourceContract() {
     path.join(installerSource, "Backup-LocalPos.ps1"),
     "production Backup-LocalPos.ps1",
   );
+  const restoreScript = readText(
+    path.join(installerSource, "Restore-LocalPos.ps1"),
+    "production Restore-LocalPos.ps1",
+  );
+  const brokerScript = readText(
+    path.join(installerSource, "Pos-Maintenance-Broker.ps1"),
+    "production Pos-Maintenance-Broker.ps1",
+  );
   const uninstallScript = readText(
     path.join(installerSource, "Uninstall-LocalPos.ps1"),
     "production Uninstall-LocalPos.ps1",
@@ -139,6 +149,10 @@ function verifyInstallerSourceContract() {
   const installRequirements = [
     ["packaged backup script path", /resources\\installer\\Backup-LocalPos\.ps1/i],
     ["machine-readable pre-migration purpose", /-Purpose['\s,]+['"]PreMigration['"]/i],
+    ["packaged fixed-operation SYSTEM broker", /Pos-Maintenance-Broker\.ps1/i],
+    ["protected Program Files install root", /ProgramW6432/i],
+    ["SYSTEM broker startup task", /Koli Wada Dhaba POS Maintenance Broker/],
+    ["01:30 missed-start policy", /StartWhenAvailable:\$false/i],
     ["machine-readable pre-migration result file", /-ResultFile['\s,]+\$backupResultFile/i],
     ["archive verification through pg_restore", /pg_restore\.exe/i],
     ["dedicated POS service identity", /KoliWadaDhabaPostgreSQL/],
@@ -159,6 +173,7 @@ function verifyInstallerSourceContract() {
     ["backup archive byte length result", /Length\s*=/],
     ["SHA256 result", /SHA256\s*=/],
     ["installation InstanceId result", /InstanceId\s*=/],
+    ["protected backup-history index", /backup-history\.json/i],
     ["01:30 schedule metadata", /ScheduleLocalTime\s*=\s*'01:30'/],
   ];
   for (const [description, pattern] of backupRequirements) {
@@ -171,9 +186,37 @@ function verifyInstallerSourceContract() {
     fail("Backup-LocalPos.ps1 must not configure missed-start execution.");
   }
 
+  const restoreRequirements = [
+    ["SYSTEM-only restore", /S-1-5-18/],
+    ["fixed backup identity validation", /BackupId -notmatch/],
+    ["verified pre-restore backup", /PreRestore/],
+    ["transactional restore", /--single-transaction/],
+    ["database identity verification", /Assert-DatabaseIdentity/],
+  ];
+  for (const [description, pattern] of restoreRequirements) {
+    if (!pattern.test(restoreScript)) {
+      fail(`Restore-LocalPos.ps1 is missing its ${description} contract.`);
+    }
+  }
+
+  const brokerRequirements = [
+    ["Owner authorization against local POS API", /127\.0\.0\.1:4000\/api\/me/],
+    ["cashier role rejection", /role -cne 'OWNER'/],
+    ["interactive-user-only named pipe", /SecurityIdentifier\]::new\('S-1-5-4'\)[\s\S]*?PipeAccessRights\]::ReadWrite/],
+    ["SYSTEM-only broker pipe administration", /SecurityIdentifier\]::new\('S-1-5-18'\)[\s\S]*?PipeAccessRights\]::FullControl/],
+    ["closed operation allowlist", /'manualBackup'|'prepareRestore'|'executeRestore'/],
+    ["bounded request size", /maximumRequestBytes/],
+  ];
+  for (const [description, pattern] of brokerRequirements) {
+    if (!pattern.test(brokerScript)) {
+      fail(`Pos-Maintenance-Broker.ps1 is missing its ${description} contract.`);
+    }
+  }
+
   const uninstallRequirements = [
     ["dedicated POS service identity", /KoliWadaDhabaPostgreSQL/],
     ["daily backup task identity", /Koli Wada Dhaba POS Daily Backup/],
+    ["SYSTEM broker task identity", /Koli Wada Dhaba POS Maintenance Broker/],
     ["01:30 task schedule validation", /01:30|FromMinutes\(90\)/],
   ];
   for (const [description, pattern] of uninstallRequirements) {
@@ -288,9 +331,13 @@ try {
   copyFile(path.join(apiSource, "prisma.config.ts"), path.join(apiRuntime, "prisma.config.ts"));
   copyFile(sharedSource, sharedRuntime);
 
-  copyDirectory(toolsSource, toolsRuntime);
+  // Keep the previously resolved local tool dependencies when they are
+  // available. This lets the release build run from the checked-in lock data
+  // and the local npm cache without reaching the registry.
+  fs.mkdirSync(toolsRuntime, { recursive: true });
+  copyFile(path.join(toolsSource, "package.json"), path.join(toolsRuntime, "package.json"));
 
-  // Stage only the three scripts required by the production installer. This
+  // Stage only the production installer and maintenance scripts. This
   // deliberately excludes deprecated development/bootstrap scripts.
   ensureWithinRuntimeRoot(installerRuntime);
   fs.rmSync(installerRuntime, { recursive: true, force: true });
@@ -306,7 +353,7 @@ try {
 
   console.log("Staged and verified the local-only POS runtime.");
   console.log("Included: API, Prisma migrations/seed, installer tools, PostgreSQL 17 and license notices.");
-  console.log("Included production scripts: Install-LocalPos.ps1, Backup-LocalPos.ps1, Uninstall-LocalPos.ps1.");
+  console.log("Included production scripts: Install-LocalPos.ps1, Backup-LocalPos.ps1, Restore-LocalPos.ps1, Pos-Maintenance-Broker.ps1, Uninstall-LocalPos.ps1.");
   console.log("Excluded deprecated development PostgreSQL provisioning and generic restore scripts.");
 } catch (error) {
   console.error(error instanceof Error ? error.message : error);

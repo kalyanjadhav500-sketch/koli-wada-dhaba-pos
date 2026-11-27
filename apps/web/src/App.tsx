@@ -4,6 +4,7 @@ import {
   ArrowDownRight,
   ArrowRight,
   ArrowUpRight,
+  Archive,
   Bell,
   CalendarDays,
   Check,
@@ -11,10 +12,13 @@ import {
   CircleDollarSign,
   Clock3,
   CreditCard,
+  HardDrive,
   LayoutDashboard,
   Menu,
   MoreHorizontal,
   Plus,
+  RefreshCw,
+  RotateCcw,
   Search,
   Settings2,
   ShoppingBag,
@@ -25,13 +29,51 @@ import {
   X,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
+import { formatCurrency } from "../../shared/currency";
 import printedMenu from "../../shared/menu.json";
 import { ApiError, apiRequest, jsonBody } from "./api";
 
 type KwdDesktopBridge = {
   listPrinters: () => Promise<{ name: string }[]>;
-  testPrinter: (printerName?: string) => Promise<void>;
-  printCurrentView: (printerName?: string) => Promise<void>;
+  testPrinter: (printerName?: string, receiptWidthMm?: 58 | 80) => Promise<void>;
+  printCurrentView: (printerName?: string) => Promise<{ usedFallback: boolean } | void>;
+  getBackupStatus: (ownerToken: string) => Promise<BackupConsoleData>;
+  createManualBackup: (ownerToken: string) => Promise<BackupRecord>;
+  restoreBackup: (ownerToken: string, backupId: string, confirmation: string) => Promise<BackupRestoreResult>;
+};
+
+type BackupRecord = {
+  BackupId: string;
+  CreatedLocal: string;
+  Purpose: string;
+  Length: number;
+  SHA256: string | null;
+  UsbAvailable: boolean | null;
+  UsbStatus: string;
+};
+type BackupStatus = {
+  ScheduleLocalTime: string;
+  LastScheduledBackupLocal: string | null;
+  LastAttemptLocal: string | null;
+  LastAttemptStatus: string | null;
+  LastAttemptPurpose: string | null;
+  LastAttemptError: string | null;
+  MissedBackupDates: string[];
+  MissedBackupCount: number;
+  UsbAvailable: boolean | null;
+  UsbStatus: string;
+};
+type BackupRestoreResult = {
+  Status: string;
+  BackupId: string;
+  RestoredLocal: string;
+  PreRestoreBackupId: string;
+  Message: string;
+};
+type BackupConsoleData = {
+  Status: BackupStatus;
+  Backups: BackupRecord[];
+  Restore: { Status: string; BackupId?: string; RestoredLocal?: string; PreRestoreBackupId?: string; Message?: string } | null;
 };
 
 declare global {
@@ -43,11 +85,10 @@ declare global {
 /** Print the prepared receipt/report through the selected Windows printer.
  *  Browser-based development retains the normal browser print dialog.
  */
-async function printPosCurrentView(): Promise<void> {
+async function printPosCurrentView(): Promise<{ usedFallback?: boolean } | void> {
   const printerName = window.localStorage.getItem("kwd-printer-name") ?? "";
   if (window.kwdDesktop) {
-    await window.kwdDesktop.printCurrentView(printerName);
-    return;
+    return window.kwdDesktop.printCurrentView(printerName);
   }
   window.print();
 }
@@ -100,6 +141,7 @@ type CurrentBill = {
   billNumber: string;
   status: "OPEN" | "PAID" | "CANCELLED";
   subtotal: string;
+  openedAt: string;
   table?: { number: number };
   items: BillLine[];
 };
@@ -121,14 +163,6 @@ function parsePrintedMenu(source: RawMenu): MenuCategoryData[] {
 }
 
 const menuCategories = parsePrintedMenu(printedMenu);
-
-function formatCurrency(value: number | string): string {
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 0,
-  }).format(Number(value));
-}
 
 function App() {
   const [tables, setTables] = useState<RestaurantTable[]>([]);
@@ -386,6 +420,14 @@ function App() {
           >
             <Activity size={18} /><span>Reports</span>
           </button>
+          {authUser.role === "OWNER" && (
+            <button
+              className={`nav-item ${activeNav === "Backups" ? "active" : ""}`}
+              onClick={() => navigateTo("Backups")}
+            >
+              <Archive size={18} /><span>Backup &amp; Restore</span>
+            </button>
+          )}
         </nav>
 
         <div className="sidebar-bottom">
@@ -473,6 +515,8 @@ function App() {
             <SettingsPage token={authToken} user={authUser} />
           ) : activeNav === "Reports" ? (
             <ReportsPage token={authToken} />
+          ) : activeNav === "Backups" && authUser.role === "OWNER" ? (
+            <BackupRestorePage token={authToken} />
           ) : (
             <>
           {notice && <div className="app-alert success-alert">{notice}<button onClick={() => setNotice("")}>Dismiss</button></div>}
@@ -1217,8 +1261,8 @@ function SettingsPage({ token, user }: { token: string; user: SignedInUser }) {
                   return;
                 }
                 try {
-                  await desktop.testPrinter(printerName);
-                  setNotice("Test print sent to the selected printer.");
+                  await desktop.testPrinter(printerName, settings.receiptWidthMm);
+                  setNotice(`Test print sent using the ${settings.receiptWidthMm} mm receipt layout.`);
                 } catch (printerError) {
                   setError(printerError instanceof Error ? printerError.message : "Test print could not be sent.");
                 }
@@ -1239,6 +1283,162 @@ function SettingsPage({ token, user }: { token: string; user: SignedInUser }) {
             <div className="staff-list">{users.map((staff) => <article className="staff-row" key={staff.id}><div className="avatar">{staff.name.slice(0, 2).toUpperCase()}</div><div className="staff-info"><strong>{staff.name}</strong><span>{staff.username} · {staff.role}</span></div><span className={`staff-state ${staff.active ? "enabled" : "inactive"}`}>{staff.active ? "Active" : "Inactive"}</span><button className="subtle-button" disabled={saving || staff.id === user.id} onClick={() => void toggleUserActive(staff)}>{staff.active ? "Disable" : "Enable"}</button></article>)}</div>
           </section>
         </>
+      )}
+    </>
+  );
+}
+
+function formatBackupDate(value: string | null | undefined): string {
+  if (!value) return "Not recorded";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Date unavailable";
+  return new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short" }).format(date);
+}
+
+function BackupRestorePage({ token }: { token: string }) {
+  const [data, setData] = useState<BackupConsoleData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [restoreTarget, setRestoreTarget] = useState<BackupRecord | null>(null);
+  const [restoreAcknowledged, setRestoreAcknowledged] = useState(false);
+  const [restorePhrase, setRestorePhrase] = useState("");
+
+  async function reload(showLoading = false): Promise<void> {
+    const desktop = window.kwdDesktop;
+    if (!desktop) {
+      setError("Backup controls are available in the installed Windows application.");
+      setLoading(false);
+      return;
+    }
+    if (showLoading) setLoading(true);
+    try {
+      setData(await desktop.getBackupStatus(token));
+      setError("");
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Protected backup status could not be loaded.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { void reload(true); }, [token]);
+
+  async function createManualBackup(): Promise<void> {
+    const desktop = window.kwdDesktop;
+    if (!desktop) return;
+    setWorking(true);
+    setError("");
+    setNotice("");
+    try {
+      const created = await desktop.createManualBackup(token);
+      setNotice(`Verified manual backup completed at ${formatBackupDate(created.CreatedLocal)}.`);
+      await reload();
+    } catch (backupError) {
+      setError(backupError instanceof Error ? backupError.message : "Manual backup failed. The current restaurant service remains available.");
+      await reload();
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function restoreSelectedBackup(): Promise<void> {
+    const desktop = window.kwdDesktop;
+    if (!desktop || !restoreTarget || !restoreAcknowledged || restorePhrase !== "RESTORE") return;
+    setWorking(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await desktop.restoreBackup(token, restoreTarget.BackupId, "RESTORE");
+      setNotice(`${result.Message} A verified pre-restore backup was also kept.`);
+      setRestoreTarget(null);
+      setRestoreAcknowledged(false);
+      setRestorePhrase("");
+      await reload();
+    } catch (restoreError) {
+      setError(restoreError instanceof Error ? restoreError.message : "Restore failed. Review the restore status and the verified pre-restore backup.");
+      await reload();
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  const status = data?.Status;
+  const backups = data?.Backups ?? [];
+  const latest = backups[0];
+
+  return (
+    <>
+      <section className="welcome-row">
+        <div>
+          <div className="eyebrow"><span className="eyebrow-line" /> OWNER DATA PROTECTION</div>
+          <h1>Backup &amp; Restore<span className="greeting-dot">.</span></h1>
+          <p className="welcome-subtitle">Verified local backups for this restaurant installation.</p>
+        </div>
+        <div className="backup-header-actions">
+          <button className="subtle-button" onClick={() => void reload(true)} disabled={loading || working} aria-label="Refresh backup status"><RefreshCw size={15} /> Refresh</button>
+          <button className="primary-button" onClick={() => void createManualBackup()} disabled={working || loading || !window.kwdDesktop}><HardDrive size={16} />{working ? "Working..." : "Create manual backup"}</button>
+        </div>
+      </section>
+
+      {error && <div className="app-alert" role="alert">{error}<button onClick={() => setError("")}>Dismiss</button></div>}
+      {notice && <div className="app-alert success-alert" role="status">{notice}<button onClick={() => setNotice("")}>Dismiss</button></div>}
+      {loading && <section className="panel backup-panel"><p>Loading protected backup status...</p></section>}
+
+      {!loading && status && (
+        <>
+          {status.MissedBackupCount > 0 && (
+            <div className="backup-warning" role="status">
+              <strong>Scheduled backup missed</strong>
+              <span>{status.MissedBackupCount} daily backup{status.MissedBackupCount === 1 ? "" : "s"} may be missing. POS service and billing remain available. The missed task will not run automatically during opening hours.</span>
+              {status.MissedBackupDates.length > 0 && <small>Dates: {status.MissedBackupDates.slice(0, 14).join(", ")}{status.MissedBackupDates.length > 14 ? " …" : ""}</small>}
+            </div>
+          )}
+
+          <div className="backup-summary-grid">
+            <article className="panel backup-summary-card"><span>Last successful backup</span><strong>{latest ? formatBackupDate(latest.CreatedLocal) : "No verified backup recorded"}</strong><small>{latest ? `${latest.Purpose} · ${(latest.Length / (1024 * 1024)).toFixed(1)} MB` : "Create a manual backup before a planned maintenance window."}</small></article>
+            <article className="panel backup-summary-card"><span>Automatic schedule</span><strong>Daily at {status.ScheduleLocalTime} local time</strong><small>Missed start is disabled. Restaurant operation is not interrupted by a missed backup.</small></article>
+            <article className={`panel backup-summary-card ${status.UsbAvailable === false ? "backup-usb-warning" : ""}`}><span>Encrypted USB availability</span><strong>{status.UsbAvailable === true ? "Connected and verified" : "Unavailable"}</strong><small>{status.UsbStatus}</small></article>
+          </div>
+
+          {status.LastAttemptStatus === "Failure" && (
+            <div className="app-alert" role="status"><strong>Last backup attempt failed.</strong> {status.LastAttemptError || "Review the local backup log before retrying."}</div>
+          )}
+          {data?.Restore?.Status === "Failure" && (
+            <div className="app-alert" role="status"><strong>Last restore attempt failed.</strong> {data.Restore.Message || "The database was not confirmed restored. Check the pre-restore backup and local logs."}</div>
+          )}
+
+          <section className="panel backup-panel">
+            <div className="panel-heading"><div><div className="panel-kicker">PROTECTED ARCHIVES</div><div className="panel-title-row"><h2>Backup history</h2><span className="total-badge">{backups.length}</span></div></div></div>
+            <p className="backup-explanation">Archives are stored under Windows ProgramData and are writable only by SYSTEM and Administrators. Cashier accounts cannot delete, replace or restore these files. No delete control is provided.</p>
+            {backups.length === 0 ? <p className="report-empty">No backup archives were found. Create a manual backup now.</p> : (
+              <div className="backup-history-list">
+                {backups.map((backup) => (
+                  <article className="backup-history-row" key={backup.BackupId}>
+                    <div className="backup-history-copy"><strong>{formatBackupDate(backup.CreatedLocal)}</strong><span>{backup.Purpose} · {(backup.Length / (1024 * 1024)).toFixed(1)} MB</span><small>{backup.BackupId}</small></div>
+                    <span className={`backup-history-usb ${backup.UsbAvailable ? "enabled" : ""}`}>{backup.UsbAvailable ? "USB copy verified" : "Local archive only"}</span>
+                    <button className="subtle-button" disabled={working || !window.kwdDesktop} onClick={() => { setRestoreTarget(backup); setRestoreAcknowledged(false); setRestorePhrase(""); }}><RotateCcw size={14} /> Restore</button>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+          <p className="backup-footnote">Restore first validates the archive, then makes and verifies a new pre-restore backup. The POS API pauses while a single-transaction restore runs. A missed 01:30 backup only creates a warning and never triggers a daytime catch-up.</p>
+        </>
+      )}
+
+      {restoreTarget && (
+        <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !working) setRestoreTarget(null); }}>
+          <section className="dialog-card backup-restore-dialog" role="dialog" aria-modal="true" aria-labelledby="restore-heading">
+            <div className="panel-heading"><div><div className="panel-kicker">OWNER AUTHORIZATION REQUIRED</div><h2 id="restore-heading">Restore this backup?</h2></div><button className="icon-button" aria-label="Close restore dialog" disabled={working} onClick={() => setRestoreTarget(null)}><X size={20} /></button></div>
+            <p className="dialog-description">This replaces current restaurant records with the selected archive. Changes entered after that backup will be removed. POS billing pauses during the restore.</p>
+            <div className="restore-confirmation-card"><strong>{formatBackupDate(restoreTarget.CreatedLocal)}</strong><span>{restoreTarget.BackupId}</span><small>The system will create and verify a separate pre-restore backup before changing the database.</small></div>
+            <label className="restore-confirm-check"><input type="checkbox" checked={restoreAcknowledged} onChange={(event) => setRestoreAcknowledged(event.target.checked)} /><span>I understand current restaurant records will be replaced by this backup.</span></label>
+            <label>Type RESTORE to confirm<input autoComplete="off" value={restorePhrase} onChange={(event) => setRestorePhrase(event.target.value.toUpperCase())} maxLength={7} /></label>
+            <div className="restore-dialog-actions"><button className="subtle-button" disabled={working} onClick={() => setRestoreTarget(null)}>Cancel</button><button className="danger-button" disabled={working || !restoreAcknowledged || restorePhrase !== "RESTORE"} onClick={() => void restoreSelectedBackup()}>{working ? "Restoring..." : "Restore selected backup"}</button></div>
+          </section>
+        </div>
       )}
     </>
   );
@@ -1298,7 +1498,7 @@ function ReportsPage({ token }: { token: string }) {
     const rows = [
       ["Report", "Daily restaurant sales", report.businessDate],
       ["Payment method", "Collection (INR)", "Payments"],
-      ...report.payments.map((payment) => [payment.method, payment.amount.toFixed(2), String(payment.count)]),
+      ...report.payments.map((payment) => [payment.method, formatCurrency(payment.amount), String(payment.count)]),
       [],
       ["Bill number", "Status", "Table", "Total (INR)", "Closed at"],
       ...[
@@ -1308,7 +1508,7 @@ function ReportsPage({ token }: { token: string }) {
         bill.billNumber,
         bill.status,
         String(todaysBills.find((entry) => entry.billNumber === bill.billNumber)?.table.number ?? ""),
-        bill.subtotal,
+        formatCurrency(bill.subtotal),
         bill.closedAt ?? "",
       ]),
     ];
@@ -1458,6 +1658,14 @@ function BillingPage({
   const [paymentKey, setPaymentKey] = useState("");
   const [paymentBusy, setPaymentBusy] = useState(false);
   const [actionMessage, setActionMessage] = useState("");
+  const [receiptSettings, setReceiptSettings] = useState<RestaurantSettings>({
+    restaurantName: "KOLI WADA DHABA",
+    subtitle: "Family Seafood Restaurant",
+    upiId: null,
+    upiPayeeName: null,
+    receiptWidthMm: 80,
+  });
+  const [paidReceipt, setPaidReceipt] = useState<ReceiptBill | null>(null);
 
   useEffect(() => {
     if (categories.length > 0 && !categories.some((category) => category.name === selectedCategory)) {
@@ -1472,9 +1680,10 @@ function BillingPage({
   useEffect(() => {
     if (!paymentOpen) return;
     let active = true;
-    void apiRequest<{ upiId: string | null; upiPayeeName: string | null }>("/settings", token)
+    void apiRequest<RestaurantSettings>("/settings", token)
       .then((settings) => {
         if (active) {
+          setReceiptSettings(settings);
           setUpiId(settings.upiId ?? "");
           setUpiPayeeName(settings.upiPayeeName ?? "");
         }
@@ -1603,7 +1812,10 @@ function BillingPage({
     setPaymentKey(key);
     setPaymentBusy(true);
     try {
-      const result = await apiRequest<{ bill: { billNumber: string }; payment: { amount: string } }>(
+      const result = await apiRequest<{
+        bill: { id: string; billNumber: string; status: "PAID"; subtotal: string; closedAt: string };
+        payment: { method: "CASH" | "UPI" | "CARD"; amount: string; confirmedAt: string };
+      }>(
         `/bills/${bill.id}/payment`,
         token,
         {
@@ -1619,7 +1831,35 @@ function BillingPage({
       );
       setPaymentKey("");
       setPaymentOpen(false);
-      onFinished(`Payment confirmed: ${result.bill.billNumber} · ${formatCurrency(result.payment.amount)}`);
+      const receipt: ReceiptBill = {
+        id: result.bill.id,
+        billNumber: result.bill.billNumber,
+        status: "PAID",
+        subtotal: result.bill.subtotal,
+        openedAt: bill.openedAt,
+        closedAt: result.bill.closedAt,
+        table: { number: bill.table?.number ?? 0 },
+        payments: [{ ...result.payment }],
+        items: bill.items,
+      };
+      setPaidReceipt(receipt);
+      let message = `Payment confirmed: ${result.bill.billNumber} · ${formatCurrency(result.payment.amount)}.`;
+      await new Promise((resolve) => window.setTimeout(resolve, 150));
+      try {
+        const printResult = await printPosCurrentView();
+        if (!window.kwdDesktop || !window.localStorage.getItem("kwd-printer-name")) {
+          message += " Windows print dialog opened.";
+        } else if (printResult?.usedFallback) {
+          message += " The saved printer is unavailable; Windows print selection opened.";
+        } else {
+          message += " Receipt sent to the preferred printer.";
+        }
+      } catch (printError) {
+        console.error("Payment was confirmed but the receipt could not be printed:", printError);
+        message += " The payment is saved; use Reports to reprint the receipt.";
+      }
+      setPaidReceipt(null);
+      onFinished(message);
     } catch (paymentError) {
       console.error("Could not confirm payment:", paymentError);
       onError(paymentError instanceof Error ? paymentError.message : "Payment could not be confirmed.");
@@ -1640,6 +1880,7 @@ function BillingPage({
       </section>
       {error && <div className="app-alert">{error}<button onClick={() => onError("")}>Dismiss</button></div>}
       {actionMessage && <div className="app-alert success-alert">{actionMessage}<button onClick={() => setActionMessage("")}>Dismiss</button></div>}
+      {paidReceipt && <div className="report-page-wrap print-receipt"><ReceiptPrint receipt={paidReceipt} settings={receiptSettings} /></div>}
 
       {!bill ? (
         <section className="panel tables-page-panel">

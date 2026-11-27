@@ -1,58 +1,73 @@
-# Koli Wada Dhaba POS — local Windows deployment
+# Windows local deployment and acceptance
 
-## Current implementation
+Koli Wada Dhaba POS is a free, offline, single-machine Windows application. It uses its packaged PostgreSQL 17 runtime and the dedicated `KoliWadaDhabaPostgreSQL` service on `127.0.0.1:5433`. Restaurant operation does not require Render, Neon, another cloud host, Gmail/SMTP, a subscription, or an internet connection.
 
-The Windows NSIS package now has elevated install/uninstall hooks. Installation uses the packaged PostgreSQL 17 runtime and provisions only the dedicated `KoliWadaDhabaPostgreSQL` service and the application’s own cluster. It does not use or change the developer service `postgresql-x64-17`.
+Production files are kept under `%ProgramData%\Koli Wada Dhaba POS`:
 
-- PostgreSQL data: `%ProgramData%\Koli Wada Dhaba POS\Data`
-- Backups: `%ProgramData%\Koli Wada Dhaba POS\Backups`
-- Protected configuration: `%ProgramData%\Koli Wada Dhaba POS\config`
-- Local PostgreSQL listener: `127.0.0.1:5433` (separate from the developer/default PostgreSQL port)
-- Local API listener: `127.0.0.1:4000`
+- Database: `Data`
+- Protected backup archives: `Backups`
+- DPAPI configuration and installation identity: `config`
+- Backup and restore status/logs: `Logs`
 
-The installer refuses to initialize an existing data directory unless it has the expected PostgreSQL 17 version and application marker. Existing clusters and credentials are reused only when the marker, service executable, data path, Windows user SID, and DPAPI files agree. Partial or ambiguous installations fail closed and retain their files for inspection.
+Never use developer service `postgresql-x64-17`, its `C:\Program Files\PostgreSQL\17\data` directory, or port 5432 for POS installation, migration, backup, restore, or testing.
 
-For a new cluster, setup generates random PostgreSQL and application credentials, initializes only the newly created empty data directory, configures SCRAM authentication and an IPv4 loopback-only listener, and registers a service with automatic startup and restart recovery. PostgreSQL data access is restricted to the service SID, SYSTEM, and Administrators. The DPAPI-protected app configuration is readable only by SYSTEM, Administrators, and the Windows user who installed the app.
+## Install
 
-Prisma `migrate deploy` runs on every install/upgrade. The existing seed runs only while the installation marker records an unseeded new cluster and the migrated database has no master or business records. It verifies the 70/13/120 master counts and never drops, resets, or copies a developer database.
+1. Verify the Setup.exe SHA256 against the release report before running it.
+2. Run Setup.exe and approve the machine-wide Windows administrator prompt. The application itself runs as the signed-in Windows user and is not elevated.
+3. Install to the standard `C:\Program Files\Koli Wada Dhaba POS` location. The broker-enabled installer requires this protected Program Files path; it does not accept a user-writable application folder.
+4. Start the desktop shortcut. It verifies the POS installation identity, waits for the dedicated database and starts the local API.
+5. Create the first Owner account. Keep the one-time offline recovery key away from the laptop. No default credentials or remote email service are shipped.
+6. Add Cashier accounts in **Settings**, choose the preferred Windows printer and paper width, and run a physical test print.
 
-The first Owner is created by the application's existing first-run setup screen after installation. No default Owner password is shipped. The Electron app waits for the dedicated PostgreSQL service, starts the local API, and waits for a successful database health response before showing the UI.
+If setup reports an error, preserve the full ProgramData folder and installer log. Do not delete the Data folder or initialize a new database to retry.
 
-## Backups and restore
+## Upgrade
 
-A Windows scheduled task runs a local custom-format PostgreSQL backup daily at 11:00 PM and starts missed work when the laptop next becomes available. It validates each dump, stores it under ProgramData, and removes only matching backup files older than 30 days. It does not delete database records.
+1. Close the POS application. The installer makes a verified custom-format pre-migration backup before applying Prisma migrations.
+2. Run the reviewed newer Setup.exe. Keep the standard Program Files location.
+3. The installer verifies the service command, service account, port, PostgreSQL version, data path, instance marker, roles, and master data. It stops if the existing installation does not match. It does not replace business data with a fresh seed.
+4. Reopen POS and confirm tables, recent bills, settings, and reports before resuming service.
 
-An optional USB copy is attempted only for a removable volume named `KWD POS BACKUP` that Windows confirms is fully BitLocker-encrypted and protected. If unavailable, the task records a warning in `%ProgramData%\Koli Wada Dhaba POS\Logs\backup.log`; the local backup remains. USB retention is not automated, so retain or remove USB backup files manually only after validating another copy.
+Use the installer upgrade path. Do not uninstall as an upgrade step. ProgramData database records, settings, logs, and backups remain outside the application install folder.
 
-The developer restore script accepts only loopback PostgreSQL URLs, requires the exact confirmation phrase `RESTORE LOCAL POS DATABASE`, creates and validates a separate pre-restore dump, then restores. Keep both the source and pre-restore dump until the restored POS has been checked.
+## Owner backup and restore
 
-## Build and isolated validation
+In the broker-enabled 0.1.5 candidate, open **Backup & Restore** from an Owner session. The API independently verifies the Owner bearer token before the SYSTEM broker accepts status, history, manual-backup, or restore preparation requests. Cashiers do not receive this screen or broker authorization.
 
-Build the API/web and installer with:
+The Owner screen shows the latest verified archive, backup history, daily schedule, missed-run warning, USB status, and prior restore result. **Create manual backup** runs the fixed backup operation. It validates the archive with `pg_restore --list`, records size and SHA256, and does not overwrite an existing archive. The optional USB copy is used only for a removable volume named `KWD POS BACKUP` that Windows confirms is fully BitLocker-encrypted and protected.
+
+Restore is available only from the protected archive history. Select a backup, review its time and ID, check the data-replacement notice, and type `RESTORE`. The broker rechecks Owner authorization, validates the selected archive and checksum, creates and verifies a separate pre-restore backup, then performs a single-transaction PostgreSQL restore. It reapplies the fixed `kwd_app` grants and verifies the application role can read business data. If restore or validation fails after the target database changes, the broker attempts to restore and validate the pre-restore archive before reporting failure. The Electron main process pauses its local API during the database operation and restarts it afterward. The renderer cannot provide a PowerShell command, SQL text, database URL, or filesystem path. The broker runs as SYSTEM through a protected Task Scheduler task and interactive-user-only named pipe; the Electron application is not an Administrator process.
+
+The archive directory grants write access only to SYSTEM and Administrators. There is no backup-delete control in the POS interface. The 01:30 AM automatic task keeps `StartWhenAvailable` disabled. A missed run appears as a warning and never initiates a daytime catch-up or blocks billing. USB availability is checked when the Owner opens or refreshes this screen; the drive must be connected, removable, labeled `KWD POS BACKUP`, fully encrypted and protected. Each archive separately records whether its optional USB copy passed SHA256 verification.
+
+**Release gate:** the existing 0.1.4 Setup.exe does not contain this Owner screen or broker. The 0.1.5 implementation is a candidate until fresh-install, upgrade, SYSTEM task/ACL, manual backup, missed-run, restore, failure recovery, uninstall, and reinstallation checks pass in a clean Windows VM. Do not use the developer-only `scripts/restore-postgres.ps1` for a customer installation; that script is restricted to disposable test clusters.
+
+## Printer setup
+
+The preferred printer is stored locally in the POS desktop profile. Bill settlement, history reprints, and reports route to it. Receipts follow the configured 58 mm or 80 mm width; reports use an 80 mm layout. If the preferred printer is no longer installed, Windows opens its print selection dialog. Failed jobs are not silently resubmitted, avoiding duplicate receipts. Run the test print on the actual printer and check clipping, paper feed, and cutter behavior; physical hardware acceptance is still pending.
+
+## Uninstall and data preservation
+
+Use Windows **Apps & features**. The uninstaller validates and removes only the POS-owned PostgreSQL service, daily backup task, and SYSTEM maintenance broker task. It preserves ProgramData database files, Owner configuration, status/logs, and backups. Uninstalling the application does not erase restaurant records.
+
+Before retiring a laptop, make a separate verified backup and retain the original machine until that archive has been restored and checked in an approved isolated environment. Do not delete ProgramData unless the Owner separately approves permanent data destruction.
+
+## Regression checks
+
+Run these from the project root:
 
 ```powershell
-npm.cmd run desktop:installer
+npm.cmd run build
+npm.cmd run test:currency --workspace @koliwada/api
+npm.cmd run test:desktop-contract
+powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\test-isolated-client-database.ps1
 ```
 
-The staging step expects a verified PostgreSQL 17 runtime at `build-runtime\postgresql17` with the server and third-party license notices. It stages API production dependencies separately and includes pinned Prisma/tsx installer tooling. It rejects missing PostgreSQL tools, a non-17 server, missing notices, or a staged data directory.
+The PostgreSQL regression suite creates a uniquely named PostgreSQL 17 cluster under Windows TEMP on a dynamically allocated loopback port. It covers Owner/Cashier authentication, 70 tables, 13 categories, 120 menu items, full/half and custom items, bill editing/removal, all payment methods, history/reports, and isolated backup/restore. It must never use the developer or installed POS service.
 
-Run the isolated end-to-end test with:
+## Windows acceptance gate
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\test-isolated-client-database.ps1
-```
+Use the step-by-step [0.1.5 Windows acceptance checklist](windows-acceptance-checklist-0.1.5.md) in a clean disposable Windows VM with no developer database or production restaurant data. Test fresh install, first launch, billing, restart, upgrade and data preservation, 01:30 task settings, manual backup, missed-run warning, restore and failure handling, uninstall, and reinstall while preserving ProgramData. Record the actual OS/build, task principal/trigger/`StartWhenAvailable`, database identities, archive hashes, and result for every case.
 
-The test uses a unique temporary PostgreSQL cluster on loopback, runs migrations and seed, verifies backup/restore including the required pre-restore backup, and tests first-Owner setup/login. It must not be pointed at the developer database.
-
-## Release gate and limitations
-
-The production NSIS installer has not been run on this developer laptop and must not be used here as a substitute for a clean Windows VM. Before release, test the exact generated installer on a clean Windows 10/11 VM or separate test laptop:
-
-1. Fresh install and UAC prompt; service identity, startup type, recovery actions, ACLs, port, and listener.
-2. Owner first-run setup/login and application launch.
-3. Windows restart, database persistence, and application launch.
-4. Daily backup task, 30-day file-only retention, encrypted USB warning/copy, and restore from a verified dump.
-5. Upgrade, uninstall/reinstall, and preservation of Owner settings, database records, and backups.
-6. Confirm `postgresql-x64-17` remains untouched throughout.
-
-No physical printer compatibility, clean-client installation, Windows restart, actual uninstall/reinstall preservation, or encrypted USB test is claimed until performed on that isolated Windows target. The PostgreSQL binaries include their bundled notices; independently verify the exact runtime source and redistribution terms before distributing the installer.
+The installer, Task Scheduler security descriptors, SYSTEM pipe authorization, Windows lifecycle, and physical printers are not fully accepted by the isolated PostgreSQL test. A customer release is not production-ready until the Windows VM checks and actual printer acceptance pass. Keep the 0.1.4 artifacts unchanged during 0.1.5 development.

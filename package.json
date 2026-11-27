@@ -14,6 +14,7 @@
     "db:deploy": "npm run db:deploy --workspace @koliwada/api",
     "db:migrate": "npm run db:migrate --workspace @koliwada/api",
     "db:seed": "npm run db:seed --workspace @koliwada/api",
+    "test:desktop-contract": "node --test apps/desktop/maintenance-contract.test.cjs apps/desktop/print-contract.test.cjs",
     "desktop:prepare": "npm run build --workspace @koliwada/web && node scripts/prepare-desktop.cjs",
     "desktop:installer": "npm run desktop:prepare && npm run build --workspace @koliwada/api && node scripts/stage-windows-runtime.cjs && npm run dist:windows --workspace @koliwada/desktop"
   },

@@ -28,6 +28,8 @@ $logDirectory = Join-Path $programDataRoot 'Logs'
 $markerPath = Join-Path $configDirectory 'installation.json'
 $adminSecretPath = Join-Path $configDirectory 'postgres-admin.dpapi'
 $statusPath = Join-Path $logDirectory 'backup-status.json'
+$historyPath = Join-Path $logDirectory 'backup-history.json'
+$backupLockPath = Join-Path $logDirectory 'backup-restore.lock'
 $logPath = Join-Path $logDirectory 'backup.log'
 
 # PSScriptRoot is <InstallDirectory>\resources\installer. The PostgreSQL
@@ -55,6 +57,8 @@ $statusMetadataWritable = $true
 $resultFileFull = $null
 $resultTempPath = $null
 $statusTempPath = $null
+$backupLock = $null
+$backupLockAcquired = $false
 
 function Write-BackupLog {
   param([Parameter(Mandatory = $true)][string]$Message)
@@ -407,6 +411,35 @@ function Get-PreviousBackupStatus {
   }
 }
 
+function Add-BackupHistoryRecord {
+  param([Parameter(Mandatory = $true)]$Record)
+
+  $entries = @()
+  if (Test-Path -LiteralPath $historyPath -PathType Leaf) {
+    Assert-NotReparsePoint -Path $historyPath -PathType Leaf
+    $existing = Get-Content -LiteralPath $historyPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    if ([int]$existing.SchemaVersion -ne 1 -or $null -eq $existing.Backups) {
+      throw 'The protected backup-history.json has an unsupported format and was preserved.'
+    }
+    $entries = @($existing.Backups)
+  }
+
+  $entries = @($entries | Where-Object { [string]$_.BackupId -cne [string]$Record.BackupId })
+  $entries += $Record
+  $presentNames = @(
+    Get-ChildItem -LiteralPath $backupDirectory -File -Filter '*.dump' -ErrorAction Stop |
+      Where-Object { $_.Name -match '^koli-wada-dhaba-\d{8}-\d{6}(?:-[0-9a-f]{32})?\.dump$' } |
+      ForEach-Object { $_.Name }
+  )
+  $entries = @($entries | Where-Object { [string]$_.BackupId -in $presentNames } |
+    Sort-Object { [string]$_.CreatedUtc } -Descending | Select-Object -First 100)
+  Write-JsonAtomic -Path $historyPath -Value ([ordered]@{
+    SchemaVersion = 1
+    Backups = $entries
+    UpdatedUtc = [DateTime]::UtcNow.ToString('o')
+  }) -AllowReplace
+}
+
 function Get-MissedScheduledDates {
   param(
     $Previous,
@@ -537,6 +570,17 @@ try {
   Assert-NotReparsePoint -Path $logDirectory -PathType Container
   Assert-NotReparsePoint -Path $markerPath -PathType Leaf
   Assert-NotReparsePoint -Path $adminSecretPath -PathType Leaf
+
+  if (Test-Path -LiteralPath $backupLockPath -PathType Leaf) {
+    Assert-NotReparsePoint -Path $backupLockPath -PathType Leaf
+  }
+  try {
+    $backupLock = [IO.FileStream]::new($backupLockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    $backupLockAcquired = $true
+  }
+  catch [IO.IOException] {
+    throw 'Another POS backup or restore is in progress. No data was changed; retry when it finishes.'
+  }
 
   foreach ($binary in @($pgCtl, $pgDump, $pgRestore, $psql)) {
     if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) {
@@ -673,6 +717,25 @@ try {
     $retentionRemoved++
   }
 
+  try {
+    Add-BackupHistoryRecord -Record ([ordered]@{
+      BackupId = $backupInfo.Name
+      Purpose = $Purpose
+      CreatedLocal = $createdLocal.ToString('o')
+      CreatedUtc = $createdUtc.ToString('o')
+      Length = $backupLength
+      SHA256 = $sha256
+      UsbAvailable = $usbAvailable
+      UsbStatus = $usbStatus
+    })
+  }
+  catch {
+    # The verified archive remains a successful backup even if its optional
+    # history index cannot be updated. The Owner broker can still discover the
+    # protected archive by its fixed name and validate it before restore.
+    Write-BackupLog -Message 'WARNING | verified backup succeeded but backup-history.json was not updated; the prior index was preserved.'
+  }
+
   $result = [ordered]@{
     SchemaVersion = 1
     Status = 'Success'
@@ -702,6 +765,10 @@ try {
     $status = [ordered]@{
       SchemaVersion = 1
       Status = 'Success'
+      LastAttemptStatus = 'Success'
+      LastAttemptPurpose = $Purpose
+      LastAttemptError = $null
+      LastScheduledBackupStatus = 'Success'
       ScheduleLocalTime = '01:30'
       LastAttemptLocal = $createdLocal.ToString('o')
       LastScheduledBackupLocal = $createdLocal.ToString('o')
@@ -725,9 +792,13 @@ try {
     $status = [ordered]@{
       SchemaVersion = 1
       Status = 'Success'
+      LastAttemptStatus = 'Success'
+      LastAttemptPurpose = $Purpose
+      LastAttemptError = $null
       ScheduleLocalTime = '01:30'
       LastAttemptLocal = $createdLocal.ToString('o')
       LastScheduledBackupLocal = if ($previousStatus) { [string]$previousStatus.LastScheduledBackupLocal } else { $null }
+      LastScheduledBackupStatus = if ($previousStatus) { [string]$previousStatus.LastScheduledBackupStatus } else { $null }
       LastScheduledBackupPath = if ($previousStatus) { [string]$previousStatus.LastScheduledBackupPath } else { $null }
       LastScheduledBackupSHA256 = if ($previousStatus) { [string]$previousStatus.LastScheduledBackupSHA256 } else { $null }
       LastScheduledBackupLength = if ($previousStatus) { [long]$previousStatus.LastScheduledBackupLength } else { 0L }
@@ -764,9 +835,15 @@ catch {
     $safeMessage = 'The backup operation failed during a protected credential or connection step.'
   }
 
+  if (-not $backupLockAcquired) {
+    $safeMessage = 'Another POS backup or restore is in progress. No data was changed; retry when it finishes.'
+  }
+
   try {
+    if ($backupLockAcquired) {
     if (Test-Path -LiteralPath $logDirectory -PathType Container) {
       Write-BackupLog -Message "FAILURE | purpose=$Purpose | $safeMessage"
+    }
     }
   }
   catch {
@@ -774,6 +851,7 @@ catch {
   }
 
   try {
+    if (-not $backupLockAcquired) { throw 'Backup lock was unavailable; the active operation status was preserved.' }
     if ($statusMetadataWritable -and (Test-Path -LiteralPath $statusPath -PathType Leaf) -and -not $previousStatus) {
       $previousStatus = Get-PreviousBackupStatus
     }
@@ -858,4 +936,5 @@ finally {
   }
 
   $adminPassword = $null
+  if ($backupLock) { $backupLock.Dispose() }
 }

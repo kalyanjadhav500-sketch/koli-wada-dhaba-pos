@@ -1,97 +1,77 @@
-# Koli Wada Dhaba
+# Koli Wada Dhaba POS
 
-Restaurant billing and management workspace for **KOLI WADA DHABA — Family Seafood Restaurant**.
+Offline billing and table management for **KOLI WADA DHABA — Family Seafood Restaurant**. The production target is one Windows laptop with a local Electron desktop app, a dedicated PostgreSQL 17 service, and no cloud or internet dependency during restaurant operations.
 
-## Current development milestone
+The old Capacitor/Android scaffold is unsupported and unrelated to the Windows POS product; it is excluded from the 0.1.5 source ZIP.
 
-The workspace now contains a React/TypeScript restaurant POS, an Express API protected by first-owner setup and role-based authentication, a PostgreSQL/Prisma schema and migrations, 70 seeded tables, the transcribed restaurant menu, bill/order/payments APIs, owner settings and user management, daily reports, and printable receipt/report layouts.
+## Windows installation
 
-The existing local PostgreSQL database currently contains the restaurant menu/tables, one Owner account, three bills (one paid and two open), and one payment. The records cannot be reliably classified as demo versus real from their current fields, so treat them as business data and preserve them. No cloud migration or deployment has been performed.
+1. Run **Koli Wada Dhaba POS Setup.exe** and approve the Windows administrator prompt. The installer creates the separate `KoliWadaDhabaPostgreSQL` service on `127.0.0.1:5433` and stores its data under `%ProgramData%\Koli Wada Dhaba POS\Data`.
+2. Launch the desktop shortcut. The application waits for the dedicated database and local API before showing the sign-in screen.
+3. On first use, create the Owner account and save or print the one-time offline recovery key. No default password or remote email service is required.
+4. Add cashier accounts in **Settings**. Owner controls are hidden from Cashier sessions and checked again by the API.
 
-## Requirements
+Use the focused guides for [installation](docs/windows-installation-0.1.5.md), [upgrade](docs/windows-upgrade-0.1.5.md), [Owner backup and restore](docs/windows-backup-restore-0.1.5.md), and [uninstall/data preservation](docs/windows-uninstall-data-preservation-0.1.5.md). The [full Windows deployment guide](docs/windows-local-deployment.md) includes the acceptance requirements. Never point POS provisioning or tests at the developer PostgreSQL service `postgresql-x64-17` or its `C:\Program Files\PostgreSQL\17\data` directory.
 
-- Node.js LTS and npm
-- Either PostgreSQL 15+ for Windows, or Docker Desktop for Windows with its Linux-container engine started
-- VS Code extensions: ESLint, Prettier, Prisma, and Tailwind CSS IntelliSense
+## Restaurant workflows
 
-On this Windows setup, restart VS Code after installing Node.js so new terminals see it. In PowerShell, use `npm.cmd` (for example, `npm.cmd install`) because the `npm.ps1` wrapper may be blocked by the local execution policy.
+- 70 tables, 13 menu categories, and the 120-item menu are seeded from `apps/shared/menu.json`. Existing complete or partial business data must be preserved; the installer does not replace it with a fresh seed.
+- Bills are attached to a table, with one open bill per table. Names and prices are snapshotted onto bill lines. Cash, UPI, and card settlement are recorded locally; UPI and card require cashier confirmation against the merchant app or terminal.
+- All displayed and exported amounts use INR (`₹`) with Indian digit grouping and two decimal places. Database amounts remain numeric.
+- Reports include payment-method and table-wise totals, paid and cancelled bills, CSV export, and printable reports and receipts.
+- A paid bill prints a receipt through the saved preferred Windows printer. Bill reprints and daily reports use the same route. Receipt layouts support 58 mm and 80 mm rolls; if the saved printer is missing, Windows opens its print selection dialog. Configure the printer and run a physical test print before service. Hardware compatibility remains pending.
+- Owner password recovery uses the one-time offline recovery key. Keep it separate from the laptop. No Gmail, SMTP, subscription, online license check, analytics, or cloud authentication is part of the runtime.
 
-## Local setup
+## Local backup
 
-1. From the project root, install dependencies: `npm.cmd install`.
-2. Create `.env` and a separate local PostgreSQL administrator-password file with fresh random secrets: `npm.cmd run env:init`. This command will not overwrite an existing `.env`. **Never commit or share `.env` or `.pgadmin-password`.**
-3. Generate the Prisma client: `npm.cmd run db:generate`.
-4. Choose one local database:
-   - Docker: start Docker Desktop's **Linux** engine, then run `npm.cmd run db:up`. Changing engines stops the active Windows containers.
-   - Windows service: install PostgreSQL 17, then run `npm.cmd run db:bootstrap` to create the limited POS database account and database. This step requests Administrator approval, uses only loopback connections, and keeps the database-admin secret outside the API's `.env`.
-5. Apply the committed PostgreSQL migrations: `npm.cmd run db:deploy`.
-6. Add the 70 restaurant tables and all menu cards: `npm.cmd run db:seed`.
-7. Start the API and dashboard: `npm.cmd run dev`.
-8. Open `http://localhost:5173`. Create the first Owner account on the initial setup screen; then add cashier accounts in **Settings**.
+Windows Task Scheduler runs the local custom-format PostgreSQL backup daily at **01:30 AM**. `StartWhenAvailable` stays disabled, so a missed run will not interrupt restaurant service. The Owner **Backup & Restore** screen in the 0.1.5 candidate shows history, last successful backup, missed-run warnings, and USB status; it supports manual backup and confirmed restore. Restore validates the selected archive, creates and verifies a separate pre-restore archive, then runs through a fixed-operation SYSTEM broker. The Electron renderer cannot send PowerShell, SQL, filesystem paths, or database URLs to that broker. Backup archives remain writable only by SYSTEM and Administrators.
 
-The development API binds to `127.0.0.1` by default, and the PostgreSQL port is loopback-only. Production clients use the HTTPS API URL supplied through `VITE_API_URL` when packaging; web users hosted by the API use a same-origin relative URL. Never expose PostgreSQL itself to the internet.
+These screen and broker changes are still awaiting clean Windows VM acceptance. They are not in the preserved 0.1.4 Setup.exe, and the 0.1.5 candidate must not be treated as production-ready until the required Windows lifecycle and restore checks pass. The optional USB copy is attempted only for a removable volume labelled `KWD POS BACKUP` with full BitLocker protection. Never use the developer-only `scripts/restore-postgres.ps1` for a customer installation; it is restricted to disposable test clusters.
 
-## Workspace
+## Workspace map
 
-- `apps/web`: responsive React/Vite dashboard
-- `apps/api`: Express API, Prisma schema, and database seed
-- `apps/api/prisma/migrations/`: committed database migrations
-- `apps/shared/menu.json`: source transcription shared by the menu manager and the database seed
-- `compose.yaml`: loopback-only development PostgreSQL container
-- `.env.example`: local development and client-build environment template
-- `apps/api/.env.example`: cloud API runtime settings template (no secrets)
-- `render.yaml`: Render web-service blueprint; it has not been deployed
+- `apps/web`: React 19, TypeScript, and Vite renderer
+- `apps/api`: Express API, authentication, business workflows, Prisma schema and migrations
+- `apps/desktop`: Electron main/preload processes and Windows NSIS installer hooks
+- `apps/shared/menu.json`: approved menu source
+- `docs/menu-reference-review.md`: comparison of the canonical menu with supplied legacy POS references
+- `scripts/windows`: Windows installation, backup, restore, broker, and uninstall utilities
+- `scripts/test-isolated-client-database.ps1`: disposable PostgreSQL regression test
+- `apps/desktop/maintenance-contract.test.cjs`: fixed-operation maintenance request tests
+- `apps/desktop/print-contract.test.cjs`: preferred-printer routing and receipt-width tests
+- `build-runtime`: locally staged PostgreSQL 17 and installer dependencies used by packaging
+- `compose.yaml`: optional local development database on port 55432; never used for POS installs or regression tests
+- `docs/windows-local-deployment.md`: client installation, upgrade, backup, and data-preservation guide
 
-Owner users can manage item names, categories, prices, and availability. Pricing for the 6 “As Per Size” items and 4 items shown with a dash stays unset until an authorised user enters the actual price. Running the seed again adds missing records and adds original manual-price notes without overwriting price changes or disabled menu items.
+## Development and validation
 
-Tables use live database status: green indicates an available table and red/orange indicates an occupied table with an open bill. Counts and labels update from the API every 15 seconds.
+Use Node.js LTS and PowerShell. On this Windows setup, use `npm.cmd` because the PowerShell `npm.ps1` wrapper may be blocked by execution policy.
 
-If the Owner password is forgotten, double-click `Reset-Owner-Password.cmd` from the trusted project folder. Enter and confirm a new 12–128-character password at the hidden prompt; it is not shown on screen or saved to a file. The script resets the single active Owner account without changing its username or restaurant data.
+```powershell
+npm.cmd run build
+npm.cmd run test:currency --workspace @koliwada/api
+npm.cmd run test:desktop-contract
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-isolated-client-database.ps1
+```
 
-Owner email recovery uses free Gmail SMTP (no paid AI/email service). Add an Owner recovery email during first setup. For an existing Owner, assign the recovery email through the trusted local database before enabling recovery. Turn on Google 2-Step Verification, create a Gmail App Password at [Google App Passwords](https://myaccount.google.com/apppasswords), then double-click `Configure-Gmail-Recovery.cmd`; the app password is entered privately, SMTP connectivity is verified, and the secret is saved only in the ignored local `.env`. Then double-click `Restart-POS-API.cmd`. The sign-in screen can request an 8-digit code sent to the registered Owner email; codes expire after 15 minutes and are single-use.
+The isolated database test provisions a uniquely named temporary PostgreSQL 17 cluster under the Windows TEMP directory and removes it after successful shutdown. It must never be changed to target the developer or installed restaurant service.
 
-The sign-in screen's **Change server address** option allows an installed client to change its HTTPS API address without rebuilding. Production installers reject temporary `trycloudflare.com` URLs.
+Build the Windows installer with:
 
-## Current operations and deployment limits
+```powershell
+npm.cmd run desktop:installer
+```
 
-- Bills are per table; the database enforces at most one open bill per table. Item prices and names are snapshotted onto each bill.
-- Only a cashier's explicit confirmation after checking the merchant app/terminal records UPI/card payment. A generated UPI QR code does **not** verify payment.
-- Reports can be printed or saved to PDF through the installed system print dialog; CSV export is also available.
-- Receipt formatting targets 58 mm or 80 mm rolls and can print through the desktop OS printer dialog. Test paper width, cutter, and the actual printer before service; Bluetooth/USB Android printer-driver support has not been hardware-certified.
-- The Electron shell uses a custom secure protocol and the Android app uses HTTPS with cleartext traffic disabled. Windows NSIS and Android debug outputs exist, but no production backend connection, signed Android release, physical-device acceptance test, or printer hardware certification has been completed.
-- API authentication hashes passwords with bcrypt; JWTs expire after eight hours. The client keeps its token in `sessionStorage`, which is not Android hardware-backed secure storage. Assess a Capacitor secure-storage solution before a public production rollout.
-- Use `npm.cmd run backup:postgres` before any database migration or upgrade. It creates a non-overwriting custom-format dump and validates the archive with `pg_restore --list`. Store it on an encrypted, access-restricted drive; archive validation is not a substitute for a restore rehearsal.
+This stages the current API, renderer, PostgreSQL runtime, and Windows utilities, then writes the NSIS package under `release/windows-0.1.5/`. To create the 0.1.5 installer and complete source ZIP while preserving current generated staging directories, run:
 
-## Prepared Render + Neon deployment (not deployed)
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release-candidate.ps1
+```
 
-The intended production path is a paid, always-on Render Node web service plus a Neon PostgreSQL database. The Render service serves both the web dashboard and API from one stable provider HTTPS subdomain. The API connects to Neon using `DATABASE_URL`; Prisma migration commands use `DIRECT_URL`. Both database URLs must use TLS (`sslmode=require`). Render's blueprint sets a single trusted proxy hop, a database-backed health check, and a small connection pool. No account has been created, no source has been uploaded, and no service or database has been deployed.
+The build uses locally cached dependencies. It excludes `.env`, `.pgadmin-password`, database data, backups, temporary test data, release folders, and the unrelated Android scaffold from the source ZIP. It includes the staged PostgreSQL runtime and license notices. Install Setup.exe only in a separate clean Windows VM or disposable test laptop; never install it on the development host.
 
-### Before deployment
+## Release status
 
-1. Review the local database inventory and make a validated backup: `npm.cmd run backup:postgres`. The current data includes two open bills; do not seed, reset, or restore over a non-empty destination.
-2. Create a Neon project/database only after approving its current paid plan and usage billing. Keep Neon secrets private. Use the pooled connection string for the API `DATABASE_URL`, and the direct connection string for migration/restore `DIRECT_URL`; include `sslmode=require` in both. Put the direct URL in the ignored local `.env`, not in source control or chat.
-3. Before creating the Render service, finish the Neon restore steps below and verify the restored data. Render's health check will remain unhealthy until the database contains the restored schema.
-4. Use the Render dashboard to deploy the reviewed source from a private Git provider repository only after explicitly approving that source upload and the paid service. `render.yaml` selects the `starter` plan, Singapore region, and `/api/health`. Add `DATABASE_URL` and `DIRECT_URL` as secret environment values; the blueprint generates a separate `JWT_SECRET`. Do not add a `VITE_API_URL` to the server build; its browser dashboard uses the same origin.
-5. Wait for the Render service's stable `https://<service>.onrender.com` address, then confirm `https://<service>.onrender.com/api/health` reports `"database":"connected"`.
+Source builds and isolated database checks are not a substitute for Windows service/ACL, upgrade, uninstall, restore, printer, and restaurant acceptance testing. Report only tests actually run. Do not describe a release as production-ready until those lifecycle and acceptance checks pass.
 
-### Preserve local data when initializing Neon
-
-Restore the validated custom-format backup into a **new, empty** Neon database using the direct URL. Do not run `prisma migrate deploy` first: the dump already contains the existing schema, migration history, menu, users, bills, payments, and audit records. Set `DIRECT_URL` privately in the ignored local `.env`, then run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\restore-postgres.ps1 -BackupPath 'backups\postgres\<backup-file>.dump'`. The script validates the archive, refuses a non-empty destination, and requires the exact confirmation `RESTORE INTO EMPTY NEON DATABASE`. It never uses `--clean`. Compare table/bill/payment counts with the pre-migration inventory, then test the API health check and application workflows. Keep the original local database and backup unchanged until the restore and acceptance tests pass. For later schema changes, back up again, then run `npm.cmd run db:deploy` with `DIRECT_URL` pointing to Neon.
-
-### Package Windows and Android clients after the stable URL exists
-
-1. Set `VITE_API_URL=https://<service>.onrender.com` in the local ignored `.env`. Never use a Quick Tunnel, localhost, or a secret in this setting.
-2. Build the Windows installer with `npm.cmd run desktop:installer`. The desktop version is now 0.1.2 so it will not overwrite the existing 0.1.0 or 0.1.1 installers.
-3. Android version is 1.2 / versionCode 3. Generate an unsigned release build with `npm.cmd run android:sync` followed by `apps\web\android\gradlew.bat -p apps\web\android assembleRelease`. A production Android release still needs a private signing key and a physical-device installation/test.
-
-Render and Neon prices are variable and can change. Review the current plan, compute/storage usage, backup/restore features, taxes, and billing limits in each provider dashboard before authorizing any purchase. A paid always-on API and a managed database are separate costs.
-
-## Windows and Android packages
-
-The project includes the Windows Electron shell and Android Capacitor configuration. Installing a client alone does not provide a restaurant server; both clients must point to the same HTTPS API and central database.
-
-- `npm.cmd run desktop:installer` builds a Windows NSIS installer under `release/windows/`.
-- `npm.cmd run android:sync` builds the web app and synchronizes the Android project.
-- `npm.cmd run android:debug` builds a debug APK under `apps/web/android/app/build/outputs/apk/debug/`. Android Studio, a JDK, and the Android SDK must be installed and configured. Play Store publishing/signing is a separate release task.
-
-Installer commands reject missing, local, temporary-tunnel, or non-HTTPS production API URLs, because `localhost` on a phone/second computer is not the restaurant server and plain HTTP can expose staff credentials.
+See the [0.1.4 release test report](docs/release-test-report-0.1.4.md) for its completed checks. The 0.1.5 release folder contains the candidate package, checksums, and actual test report; Windows lifecycle and printer hardware acceptance remain pending until performed on the separate test system.

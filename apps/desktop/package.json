@@ -1,6 +1,6 @@
 {
   "name": "@koliwada/desktop",
-  "version": "0.1.4",
+    "version": "0.1.5",
   "private": true,
   "main": "main.cjs",
   "description": "Koli Wada Dhaba restaurant POS",
@@ -16,11 +16,13 @@
     "appId": "in.koliwadadhaba.pos",
     "productName": "Koli Wada Dhaba POS",
     "directories": {
-      "output": "../../release/windows"
+      "output": "../../release/windows-0.1.5"
     },
     "files": [
       "main.cjs",
       "preload.cjs",
+      "maintenance-contract.cjs",
+      "print-contract.cjs",
       "renderer/**/*"
     ],
     "extraResources": [
@@ -63,11 +65,12 @@
     ],
     "compression": "normal",
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "requestedExecutionLevel": "asInvoker"
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
+      "allowToChangeInstallationDirectory": false,
       "include": "installer.nsh",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,

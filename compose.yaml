@@ -1,3 +1,5 @@
+# Development-only convenience database. Do not use for POS installations
+# or regression tests; those tests create disposable isolated clusters.
 services:
   db:
     image: postgres:17-alpine
@@ -8,7 +10,7 @@ services:
       POSTGRES_USER: kwd_app
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:55432:5432"
     volumes:
       - koli_wada_postgres:/var/lib/postgresql/data
     healthcheck:

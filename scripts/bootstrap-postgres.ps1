@@ -7,8 +7,8 @@
 # Production POS provisioning is performed only by:
 #   scripts/windows/Install-LocalPos.ps1
 #
-# Development database provisioning should use the isolated Docker workflow
-# documented in README.md. Disposable PostgreSQL integration tests should use
+# The optional compose.yaml database is only for manual local development.
+# Disposable PostgreSQL integration tests must use
 # scripts/test-isolated-client-database.ps1.
 #
 # This guard intentionally performs no service, filesystem, process, network,
@@ -28,7 +28,7 @@ machine-wide PostgreSQL service or database.
 For production POS installation, use the packaged Windows installer, which
 provisions the dedicated KoliWadaDhabaPostgreSQL service on port 5433.
 
-For local development, use the Docker Compose database workflow.
+For manual local development only, see the development-only compose.yaml file.
 For integration testing, use the disposable-cluster test script.
 
 No PostgreSQL service or database was accessed or changed by this script.

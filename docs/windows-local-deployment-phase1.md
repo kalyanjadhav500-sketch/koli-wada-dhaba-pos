@@ -1,4 +1,6 @@
-# Koli Wada Dhaba POS — local Windows deployment, Phase 1
+# ARCHIVED — historical Phase 1 PostgreSQL provisioning notes
+
+> **Do not follow these instructions for the current POS release.** They describe an older 5432/EDB provisioning design and are retained only for development history. The approved production target is the packaged local PostgreSQL 17 service `KoliWadaDhabaPostgreSQL` on `127.0.0.1:5433`, provisioned by the current installer. Follow [Windows local deployment](windows-local-deployment.md) instead. Never run the legacy steps against `postgresql-x64-17` or the developer PostgreSQL data directory.
 
 This phase prepares a dedicated PostgreSQL 17 cluster and its application database. It does not install or package PostgreSQL, install the Express API as a Windows service, or create the Electron installer. Do not run these steps against the developer database.
 

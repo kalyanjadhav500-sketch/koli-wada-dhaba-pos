@@ -20,7 +20,7 @@ const databasePassword = crypto.randomBytes(32).toString("hex");
 const jwtSecret = crypto.randomBytes(48).toString("base64url");
 const databaseUrl =
   `postgresql://kwd_app:${encodeURIComponent(databasePassword)}` +
-  "@127.0.0.1:5432/koli_wada_dhaba?schema=public";
+  "@127.0.0.1:55432/koli_wada_dhaba?schema=public";
 const template = fs.readFileSync(examplePath, "utf8");
 const env = template
   .replace(/^DATABASE_URL=.*$/m, `DATABASE_URL="${databaseUrl}"`)

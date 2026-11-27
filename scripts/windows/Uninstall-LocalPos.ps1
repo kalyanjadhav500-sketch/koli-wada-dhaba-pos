@@ -14,7 +14,9 @@ $databaseName = 'koli_wada_dhaba'
 $appRole = 'kwd_app'
 $port = 5433
 $backupTaskName = 'Koli Wada Dhaba POS Daily Backup'
+$brokerTaskName = 'Koli Wada Dhaba POS Maintenance Broker'
 $backupTaskPath = '\Koli Wada Dhaba POS\'
+$brokerTaskPath = $backupTaskPath
 $backupTime = [TimeSpan]::FromMinutes(90) # 01:30 AM local Windows time
 
 $programDataRoot = Join-Path $env:ProgramData 'Koli Wada Dhaba POS'
@@ -28,6 +30,8 @@ $installDirectoryFull = [IO.Path]::GetFullPath($InstallDirectory).TrimEnd('\')
 $postgresBin = Join-Path $installDirectoryFull 'resources\postgresql17\bin'
 $pgCtl = Join-Path $postgresBin 'pg_ctl.exe'
 $backupScript = Join-Path $installDirectoryFull 'resources\installer\Backup-LocalPos.ps1'
+$brokerScript = Join-Path $installDirectoryFull 'resources\installer\Pos-Maintenance-Broker.ps1'
+$restoreScript = Join-Path $installDirectoryFull 'resources\installer\Restore-LocalPos.ps1'
 $powershellExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 
 function Assert-NotReparsePoint {
@@ -278,6 +282,49 @@ function Test-DailyBackupTask {
   if (-not $parsed -or $boundary.TimeOfDay -ne $backupTime) {
     throw 'The POS backup task is not scheduled for 01:30 AM local Windows time. It was left unchanged.'
   }
+
+  $scheduler = New-Object -ComObject 'Schedule.Service'
+  $scheduler.Connect()
+  $registeredTask = $scheduler.GetFolder($backupTaskPath).GetTask($backupTaskName)
+  if ([string]$registeredTask.GetSecurityDescriptor(4) -cne 'D:P(A;;FA;;;SY)(A;;FA;;;BA)') {
+    throw 'The POS backup task DACL is not limited to SYSTEM and Administrators.'
+  }
+}
+
+function Test-MaintenanceBrokerTask {
+  param([Parameter(Mandatory = $true)]$Task)
+  if ([string]$Task.TaskName -cne $brokerTaskName -or [string]$Task.TaskPath -cne $brokerTaskPath -or
+      @($Task.Actions).Count -ne 1 -or @($Task.Triggers).Count -ne 1) {
+    throw 'The scheduled task identity does not match the approved POS maintenance broker.'
+  }
+  $action = $Task.Actions[0]
+  $actualPowerShell = [IO.Path]::GetFullPath([string]$action.Execute)
+  $expectedPowerShell = [IO.Path]::GetFullPath($powershellExe)
+  $actualArguments = ([string]$action.Arguments).Replace('"', '').Trim()
+  $expectedArguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File $brokerScript"
+  if (-not [string]::Equals($actualPowerShell, $expectedPowerShell, [StringComparison]::OrdinalIgnoreCase) -or
+      -not [string]::Equals($actualArguments, $expectedArguments, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'The maintenance broker task action is unexpected. It was left unchanged.'
+  }
+  $principal = $Task.Principal
+  if ([string]$principal.UserId -notin @('SYSTEM','NT AUTHORITY\SYSTEM','S-1-5-18') -or
+      [string]$principal.LogonType -ne 'ServiceAccount' -or [string]$principal.RunLevel -ne 'Highest') {
+    throw 'The maintenance broker task is not configured for SYSTEM / ServiceAccount / Highest.'
+  }
+  if ([string]$Task.State -eq 'Disabled' -or [bool]$Task.Settings.StartWhenAvailable -or
+      [int]$Task.Settings.RestartCount -ne 3 -or [TimeSpan]$Task.Settings.RestartInterval -ne [TimeSpan]::FromMinutes(1)) {
+    throw 'The maintenance broker task has an unexpected state or startup policy.'
+  }
+  if ([string]$Task.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger' -or
+      -not [bool]$Task.Triggers[0].Enabled) {
+    throw 'The maintenance broker task is not registered for Windows startup.'
+  }
+  $scheduler = New-Object -ComObject 'Schedule.Service'
+  $scheduler.Connect()
+  $registeredTask = $scheduler.GetFolder($brokerTaskPath).GetTask($brokerTaskName)
+  if ([string]$registeredTask.GetSecurityDescriptor(4) -cne 'D:P(A;;FA;;;SY)(A;;FA;;;BA)') {
+    throw 'The maintenance broker task DACL is not limited to SYSTEM and Administrators.'
+  }
 }
 
 function ConvertTo-WindowsArgument {
@@ -391,8 +438,45 @@ function Register-VerifiedBackupTask {
   Register-ScheduledTask -TaskName $backupTaskName -TaskPath $backupTaskPath `
     -Action $action -Trigger $trigger -Principal $principal -Settings $settings | Out-Null
 
+  $scheduler = New-Object -ComObject 'Schedule.Service'
+  $scheduler.Connect()
+  $registeredTask = $scheduler.GetFolder($backupTaskPath).GetTask($backupTaskName)
+  $taskSddl = 'D:P(A;;FA;;;SY)(A;;FA;;;BA)'
+  $registeredTask.SetSecurityDescriptor($taskSddl, 4)
+  if ([string]$registeredTask.GetSecurityDescriptor(4) -cne $taskSddl) {
+    throw 'The restored POS backup task DACL could not be restricted to SYSTEM and Administrators.'
+  }
+
   $restoredTask = Get-ScheduledTask -TaskName $backupTaskName -TaskPath $backupTaskPath -ErrorAction Stop
   Test-DailyBackupTask -Task $restoredTask
+}
+
+function Register-VerifiedMaintenanceBrokerTask {
+  $existingTask = Get-ScheduledTask -TaskName $brokerTaskName -TaskPath $brokerTaskPath -ErrorAction SilentlyContinue
+  if ($existingTask) {
+    Test-MaintenanceBrokerTask -Task $existingTask
+    if ([string]$existingTask.State -eq 'Running') { Stop-ScheduledTask -TaskName $brokerTaskName -TaskPath $brokerTaskPath -ErrorAction Stop }
+  }
+  $arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $brokerScript + '"'
+  $action = New-ScheduledTaskAction -Execute $powershellExe -Argument $arguments
+  $trigger = New-ScheduledTaskTrigger -AtStartup
+  $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+  $settings = New-ScheduledTaskSettingsSet -Hidden -StartWhenAvailable:$false `
+    -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) `
+    -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -DontStopIfGoingOnBatteries
+  Register-ScheduledTask -TaskName $brokerTaskName -TaskPath $brokerTaskPath `
+    -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+  $scheduler = New-Object -ComObject 'Schedule.Service'
+  $scheduler.Connect()
+  $registeredTask = $scheduler.GetFolder($brokerTaskPath).GetTask($brokerTaskName)
+  $taskSddl = 'D:P(A;;FA;;;SY)(A;;FA;;;BA)'
+  $registeredTask.SetSecurityDescriptor($taskSddl, 4)
+  if ([string]$registeredTask.GetSecurityDescriptor(4) -cne $taskSddl) {
+    throw 'The restored maintenance broker task DACL could not be restricted to SYSTEM and Administrators.'
+  }
+  $restoredTask = Get-ScheduledTask -TaskName $brokerTaskName -TaskPath $brokerTaskPath -ErrorAction Stop
+  Test-MaintenanceBrokerTask -Task $restoredTask
+  Start-ScheduledTask -TaskName $brokerTaskName -TaskPath $brokerTaskPath -ErrorAction Stop
 }
 
 if (-not [Environment]::Is64BitOperatingSystem) {
@@ -411,11 +495,12 @@ if (-not (Test-Path -LiteralPath $installDirectoryFull -PathType Container)) {
 
 $service = Get-CimInstance Win32_Service -Filter "Name='$serviceName'" -ErrorAction SilentlyContinue
 $task = Get-ScheduledTask -TaskName $backupTaskName -TaskPath $backupTaskPath -ErrorAction SilentlyContinue
+$brokerTask = Get-ScheduledTask -TaskName $brokerTaskName -TaskPath $brokerTaskPath -ErrorAction SilentlyContinue
 
 # If neither machine-wide resource exists, do not infer ownership from a folder
 # name and do not touch ProgramData. Any retained database files are preserved.
-if (-not $service -and -not $task) {
-  Write-Output 'No dedicated Koli Wada Dhaba POS service or backup task is registered.'
+if (-not $service -and -not $task -and -not $brokerTask) {
+  Write-Output 'No dedicated Koli Wada Dhaba POS service or maintenance task is registered.'
   Write-Output 'ProgramData database files, business records, Owner configuration and backups were preserved.'
   exit 0
 }
@@ -440,17 +525,41 @@ if ($task) {
   Test-DailyBackupTask -Task $task
 }
 
+if ($brokerTask) {
+  foreach ($requiredBrokerFile in @($brokerScript,$restoreScript,$powershellExe)) {
+    if (-not (Test-Path -LiteralPath $requiredBrokerFile -PathType Leaf)) {
+      throw 'A packaged POS maintenance broker file is missing. The task and PostgreSQL service were left unchanged.'
+    }
+    Assert-NotReparsePoint -Path $requiredBrokerFile -PathType Leaf
+  }
+  Test-MaintenanceBrokerTask -Task $brokerTask
+}
+
 if ($service -and -not (Test-Path -LiteralPath $pgCtl -PathType Leaf)) {
   throw 'The packaged PostgreSQL pg_ctl.exe is missing. The service registration was retained.'
 }
 
 $taskRemoved = $false
+$brokerTaskRemoved = $false
 $serviceStopAttempted = $false
 $initialServiceWasRunning = if ($service) { [string]$service.State -eq 'Running' } else { $false }
 
 try {
-  # Remove the validated task first. If service shutdown/unregistration fails,
-  # the exact approved 01:30 task is restored before the uninstaller aborts.
+  # Stop/remove only the exact validated POS tasks before service removal.
+  # Rollback restores both tasks if service shutdown or unregistration fails.
+  if ($brokerTask) {
+    $brokerRecheck = Get-ScheduledTask -TaskName $brokerTaskName -TaskPath $brokerTaskPath -ErrorAction Stop
+    Test-MaintenanceBrokerTask -Task $brokerRecheck
+    if ([string]$brokerRecheck.State -eq 'Running') {
+      Stop-ScheduledTask -TaskName $brokerTaskName -TaskPath $brokerTaskPath -ErrorAction Stop
+    }
+    Unregister-ScheduledTask -TaskName $brokerTaskName -TaskPath $brokerTaskPath -Confirm:$false -ErrorAction Stop
+    $brokerTaskRemoved = $true
+    if (Get-ScheduledTask -TaskName $brokerTaskName -TaskPath $brokerTaskPath -ErrorAction SilentlyContinue) {
+      throw 'The validated POS maintenance broker task still exists after unregistration.'
+    }
+  }
+
   if ($task) {
     $taskRecheck = Get-ScheduledTask -TaskName $backupTaskName -TaskPath $backupTaskPath -ErrorAction Stop
     Test-DailyBackupTask -Task $taskRecheck
@@ -548,6 +657,16 @@ catch {
     }
   }
 
+  if ($brokerTaskRemoved) {
+    if (-not $serviceStillRegistered) {
+      $rollbackErrors += 'The POS PostgreSQL service registration is no longer present, so the maintenance broker task was not recreated.'
+    }
+    else {
+      try { Register-VerifiedMaintenanceBrokerTask }
+      catch { $rollbackErrors += "Could not restore the verified POS maintenance broker task: $($_.Exception.Message)" }
+    }
+  }
+
   if ($rollbackErrors.Count -gt 0) {
     throw ($primaryError + ' Rollback warning: ' + ($rollbackErrors -join ' | ') + ' The ProgramData database and backups were not deleted.')
   }
@@ -555,5 +674,5 @@ catch {
   throw ($primaryError + ' The previously validated POS resources were restored where necessary. ProgramData database and backups were not deleted.')
 }
 
-Write-Output 'The verified Koli Wada Dhaba POS PostgreSQL service and 01:30 AM backup task were unregistered.'
+Write-Output 'The verified Koli Wada Dhaba POS PostgreSQL service, 01:30 AM backup task and SYSTEM maintenance broker task were unregistered.'
 Write-Output 'ProgramData database files, business records, Owner configuration and backups were preserved.'

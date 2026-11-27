@@ -13,6 +13,18 @@ const path = require('node:path');
 const http = require('node:http');
 const net = require('node:net');
 const { spawn, execFile, execFileSync } = require('node:child_process');
+const {
+  validateOwnerToken,
+  validateBackupId,
+  createOwnerRequest,
+  createRestorePrepareRequest,
+  createRestoreExecuteRequest,
+} = require('./maintenance-contract.cjs');
+const {
+  validateInstalledPrinterName,
+  resolvePreferredPrinter,
+  validateReceiptWidthMm,
+} = require('./print-contract.cjs');
 
 const SERVICE_NAME = 'KoliWadaDhabaPostgreSQL';
 const SERVICE_ACCOUNT = 'NT AUTHORITY\\NetworkService';
@@ -22,6 +34,7 @@ const DATABASE_PORT = 5433;
 const API_HOST = '127.0.0.1';
 const API_PORT = 4000;
 const API_BASE_URL = `http://${API_HOST}:${API_PORT}`;
+const MAINTENANCE_PIPE = '\\\\.\\pipe\\KwdPosMaintenanceBroker';
 const CUSTOM_SCHEME = 'koliwada';
 const CUSTOM_HOST = 'desktop';
 const HEALTH_PATH = '/api/health';
@@ -488,6 +501,34 @@ async function startLocalApi(installation) {
   await waitForApi();
 }
 
+async function stopLocalApiAndWait() {
+  const processToStop = apiProcess;
+  if (!processToStop || processToStop.exitCode !== null) {
+    apiProcess = null;
+    await assertApiPortAvailable();
+    return;
+  }
+
+  const exited = new Promise((resolve) => processToStop.once('exit', resolve));
+  try { processToStop.kill('SIGTERM'); } catch { /* it may already be exiting */ }
+  let forceTimer;
+  const forced = new Promise((resolve) => {
+    forceTimer = setTimeout(() => {
+      if (processToStop.exitCode === null) {
+        try { processToStop.kill(); } catch { /* the process may have exited */ }
+      }
+      resolve();
+    }, 12000);
+  });
+  await Promise.race([exited, forced]);
+  clearTimeout(forceTimer);
+  if (processToStop.exitCode === null) {
+    throw new Error('The local POS API did not stop cleanly. The database restore was not started.');
+  }
+  if (apiProcess === processToStop) apiProcess = null;
+  await assertApiPortAvailable();
+}
+
 function stopLocalApi() {
   if (apiProcess && apiProcess.exitCode === null && !apiProcess.killed) {
     try { apiProcess.kill('SIGTERM'); } catch { /* process may already be exiting */ }
@@ -502,16 +543,6 @@ function isTrustedRendererFrame(event) {
   } catch {
     return false;
   }
-}
-
-function validatePrinterName(printerName, printers) {
-  if (printerName === undefined || printerName === null || printerName === '') return '';
-  if (typeof printerName !== 'string' || printerName.length > 256 || /[\r\n\0]/.test(printerName)) {
-    throw new Error('The selected Windows printer name is invalid.');
-  }
-  const found = printers.some((printer) => printer.name === printerName);
-  if (!found) throw new Error('The selected Windows printer is not currently installed or available.');
-  return printerName;
 }
 
 function printWebContents(webContents, printerName) {
@@ -536,6 +567,117 @@ function printWebContents(webContents, printerName) {
   });
 }
 
+function invokeMaintenanceBroker(request, timeoutMs = 120000) {
+  return new Promise((resolve, reject) => {
+    let socket = null;
+    let responseText = '';
+    let finished = false;
+    let connected = false;
+    let retryTimer = null;
+    let connectTimer = null;
+    const connectDeadline = Date.now() + Math.min(timeoutMs, 15000);
+    const finish = (error, value) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(retryTimer);
+      clearTimeout(connectTimer);
+      if (socket) socket.destroy();
+      if (error) reject(error);
+      else resolve(value);
+    };
+
+    const connect = () => {
+      if (finished) return;
+      socket = net.createConnection(MAINTENANCE_PIPE);
+      socket.setTimeout(timeoutMs);
+      socket.once('connect', () => {
+        connected = true;
+        clearTimeout(connectTimer);
+        socket.write(`${JSON.stringify(request)}\n`, 'utf8');
+      });
+      socket.on('data', (chunk) => {
+        responseText += chunk.toString('utf8');
+        if (Buffer.byteLength(responseText, 'utf8') > 65536) {
+          finish(new Error('The protected POS maintenance broker returned an invalid response.'));
+          return;
+        }
+        const newline = responseText.indexOf('\n');
+        if (newline < 0) return;
+        let response;
+        try { response = JSON.parse(responseText.slice(0, newline)); }
+        catch { finish(new Error('The protected POS maintenance broker returned invalid data.')); return; }
+        if (!response || response.ok !== true) {
+          finish(new Error(typeof response?.error === 'string' ? response.error : 'The protected POS maintenance request failed.'));
+          return;
+        }
+        finish(null, response.data);
+      });
+      socket.once('error', () => {
+        if (!connected && Date.now() < connectDeadline && !finished) {
+          retryTimer = setTimeout(connect, 250);
+          return;
+        }
+        finish(new Error('The protected POS maintenance broker is unavailable. Restart the POS or contact support.'));
+      });
+      socket.once('timeout', () => finish(new Error('The protected POS maintenance operation timed out.')));
+      socket.once('end', () => {
+        if (!finished) finish(new Error('The protected POS maintenance broker closed the connection without a result.'));
+      });
+    };
+    connectTimer = setTimeout(() => finish(new Error('The protected POS maintenance broker did not start in time. Restart the POS or contact support.')), Math.min(timeoutMs, 15000));
+    connect();
+  });
+}
+
+async function getBackupStatusForTrustedRenderer(event, token) {
+  if (!isTrustedRendererFrame(event)) throw new Error('Backup access is available only from the POS application window.');
+  const ownerToken = validateOwnerToken(token);
+  return invokeMaintenanceBroker(createOwnerRequest('status', ownerToken));
+}
+
+async function createManualBackupForTrustedRenderer(event, token) {
+  if (!isTrustedRendererFrame(event)) throw new Error('Backup access is available only from the POS application window.');
+  const ownerToken = validateOwnerToken(token);
+  return invokeMaintenanceBroker(createOwnerRequest('manualBackup', ownerToken), 2 * 60 * 60 * 1000);
+}
+
+async function restoreBackupForTrustedRenderer(event, token, backupId, confirmation) {
+  if (!isTrustedRendererFrame(event)) throw new Error('Restore access is available only from the POS application window.');
+  if (confirmation !== 'RESTORE') throw new Error('Type RESTORE in the confirmation panel before continuing.');
+  const ownerToken = validateOwnerToken(token);
+  const selectedBackupId = validateBackupId(backupId);
+  const prepared = await invokeMaintenanceBroker(
+    createRestorePrepareRequest(ownerToken, selectedBackupId, confirmation),
+    5 * 60 * 1000,
+  );
+  if (!prepared || !/^[0-9a-f]{32}$/.test(prepared.Ticket || '')) {
+    throw new Error('The selected backup could not be prepared for restore.');
+  }
+
+  await stopLocalApiAndWait();
+  closeApiLogHandles();
+  let restoreResult;
+  let restoreError;
+  try {
+    restoreResult = await invokeMaintenanceBroker(createRestoreExecuteRequest(prepared.Ticket), 2 * 60 * 60 * 1000);
+  } catch (error) {
+    restoreError = error;
+  }
+
+  let restartError;
+  try {
+    await startLocalApi(readInstallationIdentity());
+  } catch (error) {
+    restartError = error;
+  }
+  if (restartError) {
+    const detail = restartError instanceof Error ? restartError.message : 'Unknown startup error.';
+    throw new Error(`Restore processing finished, but the local POS API could not restart. Keep the backup files and installer logs. ${detail}`);
+  }
+  if (restoreError) throw restoreError;
+  return restoreResult;
+}
+
 async function listPrintersForTrustedRenderer(event) {
   if (!isTrustedRendererFrame(event) || !mainWindow || mainWindow.isDestroyed()) {
     throw new Error('Printer access is available only from the POS application window.');
@@ -544,14 +686,15 @@ async function listPrintersForTrustedRenderer(event) {
   return printers.map((printer) => ({ name: printer.name }));
 }
 
-async function testPrinterForTrustedRenderer(event, printerName) {
+async function testPrinterForTrustedRenderer(event, printerName, receiptWidthMm) {
   if (!isTrustedRendererFrame(event)) {
     throw new Error('Printer access is available only from the POS application window.');
   }
   const printers = mainWindow && !mainWindow.isDestroyed()
     ? await mainWindow.webContents.getPrintersAsync()
     : [];
-  const selectedPrinter = validatePrinterName(printerName, printers);
+  const selectedPrinter = validateInstalledPrinterName(printerName, printers);
+  validateReceiptWidthMm(receiptWidthMm);
 
   const testWindow = new BrowserWindow({
     show: false,
@@ -566,7 +709,7 @@ async function testPrinterForTrustedRenderer(event, printerName) {
     },
   });
 
-  const testHtml = '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'"></head><body style="font-family:monospace;text-align:center;padding:12px"><h2>KOLI WADA DHABA</h2><p>Thermal printer test</p><p>58 mm / 80 mm printer connection</p><p>Thank you.</p></body></html>';
+  const testHtml = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>@page{size:${receiptWidthMm}mm auto;margin:0}body{box-sizing:border-box;font-family:Consolas,'Courier New',monospace;margin:0;padding:2mm;text-align:center;width:${receiptWidthMm}mm}h2{font-size:12px;overflow-wrap:anywhere}p{font-size:9px}</style></head><body><h2>KOLI WADA DHABA</h2><p>Thermal printer test</p><p>${receiptWidthMm} mm receipt</p><p>Thank you.</p></body></html>`;
 
   try {
     await testWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(testHtml)}`);
@@ -581,14 +724,21 @@ async function printCurrentViewForTrustedRenderer(event, printerName) {
     throw new Error('Printing is available only from the POS application window.');
   }
   const printers = await mainWindow.webContents.getPrintersAsync();
-  const selectedPrinter = validatePrinterName(printerName, printers);
-  await printWebContents(mainWindow.webContents, selectedPrinter);
+  const printRoute = resolvePreferredPrinter(printerName, printers);
+  // If a saved printer has been removed, let Windows show its normal printer
+  // dialog. This avoids silently dropping a bill and lets the cashier select
+  // the current default printer. Failed jobs are not retried automatically.
+  await printWebContents(mainWindow.webContents, printRoute.printerName);
+  return { usedFallback: printRoute.usedFallback };
 }
 
 function registerIpcHandlers() {
   ipcMain.handle('printers:list', listPrintersForTrustedRenderer);
   ipcMain.handle('printers:test', testPrinterForTrustedRenderer);
   ipcMain.handle('printing:current-view', printCurrentViewForTrustedRenderer);
+  ipcMain.handle('backups:status', getBackupStatusForTrustedRenderer);
+  ipcMain.handle('backups:manual', createManualBackupForTrustedRenderer);
+  ipcMain.handle('backups:restore', restoreBackupForTrustedRenderer);
 }
 
 function isAllowedRendererUrl(value) {

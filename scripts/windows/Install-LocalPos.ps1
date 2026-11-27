@@ -13,7 +13,9 @@ $appRole = "kwd_app"
 $port = 5433
 $serviceAccount = "NT AUTHORITY\NetworkService"
 $backupTaskName = "Koli Wada Dhaba POS Daily Backup"
+$brokerTaskName = "Koli Wada Dhaba POS Maintenance Broker"
 $backupTaskPath = "\Koli Wada Dhaba POS\"
+$brokerTaskPath = $backupTaskPath
 $backupTime = [TimeSpan]::FromMinutes(90) # 01:30 AM local Windows time
 
 $programDataRoot = Join-Path $env:ProgramData "Koli Wada Dhaba POS"
@@ -34,6 +36,8 @@ $prismaCli = Join-Path $toolsDirectory "prisma\build\index.js"
 $tsxCli = Join-Path $toolsDirectory "tsx\dist\cli.mjs"
 $seedScript = Join-Path $apiDirectory "prisma\seed.ts"
 $backupScript = Join-Path $installDirectoryFull "resources\installer\Backup-LocalPos.ps1"
+$brokerScript = Join-Path $installDirectoryFull "resources\installer\Pos-Maintenance-Broker.ps1"
+$restoreScript = Join-Path $installDirectoryFull "resources\installer\Restore-LocalPos.ps1"
 $powershellExe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
 $pgCtl = Join-Path $postgresBin "pg_ctl.exe"
 $postgres = Join-Path $postgresBin "postgres.exe"
@@ -821,8 +825,171 @@ function Register-AndVerifyBackupTask {
       -Force | Out-Null
   }
 
+  Protect-PosTaskDefinition -TaskName $backupTaskName
   $verifiedTask = Get-ScheduledTask -TaskName $backupTaskName -TaskPath $backupTaskPath -ErrorAction Stop
   Test-DailyBackupTask -Task $verifiedTask
+}
+
+function Test-MaintenanceBrokerTask {
+  param([Parameter(Mandatory = $true)]$Task)
+
+  if ($Task.TaskName -cne $brokerTaskName -or $Task.TaskPath -cne $brokerTaskPath -or
+      @($Task.Actions).Count -ne 1 -or @($Task.Triggers).Count -ne 1) {
+    throw 'The existing POS maintenance broker task identity is unexpected.'
+  }
+  $action = $Task.Actions[0]
+  $actualPowerShell = [IO.Path]::GetFullPath([string]$action.Execute)
+  $expectedPowerShell = [IO.Path]::GetFullPath($powershellExe)
+  $actualArguments = ([string]$action.Arguments).Replace('"', '').Trim()
+  $expectedArguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File $brokerScript"
+  if (-not [string]::Equals($actualPowerShell, $expectedPowerShell, [StringComparison]::OrdinalIgnoreCase) -or
+      -not [string]::Equals($actualArguments, $expectedArguments, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'The existing POS maintenance task does not exactly launch the packaged fixed-operation broker.'
+  }
+  $principal = $Task.Principal
+  if ([string]$principal.UserId -notin @('SYSTEM','NT AUTHORITY\SYSTEM','S-1-5-18') -or
+      [string]$principal.LogonType -ne 'ServiceAccount' -or [string]$principal.RunLevel -ne 'Highest') {
+    throw 'The POS maintenance broker task must run only as SYSTEM.'
+  }
+  if ([string]$Task.State -eq 'Disabled' -or [bool]$Task.Settings.StartWhenAvailable -or
+      [int]$Task.Settings.RestartCount -ne 3 -or
+      [TimeSpan]$Task.Settings.RestartInterval -ne [TimeSpan]::FromMinutes(1)) {
+    throw 'The POS maintenance broker task has unexpected startup, retry or execution settings.'
+  }
+  $trigger = $Task.Triggers[0]
+  if ([string]$trigger.CimClass.CimClassName -ne 'MSFT_TaskBootTrigger' -or -not [bool]$trigger.Enabled) {
+    throw 'The POS maintenance broker task must have one enabled Windows startup trigger.'
+  }
+  Assert-PosTaskDacl -TaskName $brokerTaskName
+}
+
+function Assert-ExistingMaintenanceBrokerTaskSafe {
+  $existingTask = Get-ScheduledTask -TaskName $brokerTaskName -TaskPath $brokerTaskPath -ErrorAction SilentlyContinue
+  if ($existingTask) {
+    if (-not (Test-Path -LiteralPath $brokerScript -PathType Leaf)) {
+      throw 'The packaged POS maintenance broker is missing. The existing task was left unchanged.'
+    }
+    Test-MaintenanceBrokerTask -Task $existingTask
+  }
+}
+
+function Protect-PosTaskFolder {
+  $scheduler = New-Object -ComObject 'Schedule.Service'
+  $scheduler.Connect()
+  try {
+    $folder = $scheduler.GetFolder($brokerTaskPath)
+  }
+  catch {
+    $folder = $scheduler.GetFolder('\').CreateFolder('Koli Wada Dhaba POS', 'D:P(A;;FA;;;SY)(A;;FA;;;BA)')
+  }
+  $folderSddl = 'D:P(A;;FA;;;SY)(A;;FA;;;BA)'
+  $folder.SetSecurityDescriptor($folderSddl, 4)
+  $actualSddl = [string]$folder.GetSecurityDescriptor(4)
+  if ($actualSddl -cne $folderSddl) {
+    throw 'The POS Task Scheduler folder ACL could not be restricted to SYSTEM and Administrators.'
+  }
+  return $folder
+}
+
+function Assert-PosTaskDacl {
+  param([Parameter(Mandatory = $true)][string]$TaskName)
+  $scheduler = New-Object -ComObject 'Schedule.Service'
+  $scheduler.Connect()
+  $taskFolder = $scheduler.GetFolder($brokerTaskPath)
+  $registeredTask = $taskFolder.GetTask($TaskName)
+  $actualSddl = [string]$registeredTask.GetSecurityDescriptor(4)
+  if ($actualSddl -cne 'D:P(A;;FA;;;SY)(A;;FA;;;BA)') {
+    throw "The $TaskName task DACL is not limited to SYSTEM and Administrators."
+  }
+}
+
+function Protect-PosTaskDefinition {
+  param([Parameter(Mandatory = $true)][string]$TaskName)
+  $scheduler = New-Object -ComObject 'Schedule.Service'
+  $scheduler.Connect()
+  $taskFolder = $scheduler.GetFolder($brokerTaskPath)
+  $registeredTask = $taskFolder.GetTask($TaskName)
+  $taskSddl = 'D:P(A;;FA;;;SY)(A;;FA;;;BA)'
+  $registeredTask.SetSecurityDescriptor($taskSddl, 4)
+  if ([string]$registeredTask.GetSecurityDescriptor(4) -cne $taskSddl) {
+    throw "The $TaskName task DACL could not be restricted to SYSTEM and Administrators."
+  }
+}
+
+function Test-PosMaintenanceBrokerPipe {
+  $client = $null
+  try {
+    $client = [System.IO.Pipes.NamedPipeClientStream]::new(
+      '.', 'KwdPosMaintenanceBroker', [System.IO.Pipes.PipeDirection]::InOut
+    )
+    $client.Connect(500)
+    $encoding = [Text.UTF8Encoding]::new($false)
+    $writer = [IO.StreamWriter]::new($client, $encoding, 1024, $true)
+    $reader = [IO.StreamReader]::new($client, $encoding, $false, 1024, $true)
+    $writer.WriteLine('{"operation":"ping"}')
+    $writer.Flush()
+    $line = $reader.ReadLine()
+    if ([string]::IsNullOrWhiteSpace($line)) { return $false }
+    $response = $line | ConvertFrom-Json -ErrorAction Stop
+    return [bool]$response.ok -and [string]$response.data.Status -ceq 'Ready'
+  }
+  catch { return $false }
+  finally { if ($client) { $client.Dispose() } }
+}
+
+function Register-AndVerifyMaintenanceBrokerTask {
+  if (-not (Test-Path -LiteralPath $brokerScript -PathType Leaf) -or
+      -not (Test-Path -LiteralPath $restoreScript -PathType Leaf)) {
+    throw 'The fixed-operation POS backup/restore broker package is incomplete.'
+  }
+  $existingTask = Get-ScheduledTask -TaskName $brokerTaskName -TaskPath $brokerTaskPath -ErrorAction SilentlyContinue
+  if ($existingTask) {
+    Test-MaintenanceBrokerTask -Task $existingTask
+    if ([string]$existingTask.State -eq 'Running') {
+      Stop-ScheduledTask -TaskName $brokerTaskName -TaskPath $brokerTaskPath -ErrorAction Stop
+      for ($attempt = 0; $attempt -lt 20; $attempt++) {
+        $existingTask = Get-ScheduledTask -TaskName $brokerTaskName -TaskPath $brokerTaskPath -ErrorAction Stop
+        if ([string]$existingTask.State -ne 'Running') { break }
+        Start-Sleep -Milliseconds 250
+      }
+      if ([string]$existingTask.State -eq 'Running') {
+        throw 'The existing POS maintenance broker did not stop cleanly for upgrade.'
+      }
+    }
+  }
+
+  [void](Protect-PosTaskFolder)
+  $arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $brokerScript + '"'
+  $action = New-ScheduledTaskAction -Execute $powershellExe -Argument $arguments
+  $trigger = New-ScheduledTaskTrigger -AtStartup
+  $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+  $settings = New-ScheduledTaskSettingsSet -Hidden -StartWhenAvailable:$false `
+    -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) `
+    -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -DontStopIfGoingOnBatteries
+  Register-ScheduledTask -TaskName $brokerTaskName -TaskPath $brokerTaskPath `
+    -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+
+  Protect-PosTaskDefinition -TaskName $brokerTaskName
+  $verifiedTask = Get-ScheduledTask -TaskName $brokerTaskName -TaskPath $brokerTaskPath -ErrorAction Stop
+  Test-MaintenanceBrokerTask -Task $verifiedTask
+  Start-ScheduledTask -TaskName $brokerTaskName -TaskPath $brokerTaskPath -ErrorAction Stop
+  for ($attempt = 0; $attempt -lt 40; $attempt++) {
+    Start-Sleep -Milliseconds 250
+    $verifiedTask = Get-ScheduledTask -TaskName $brokerTaskName -TaskPath $brokerTaskPath -ErrorAction Stop
+    if ([string]$verifiedTask.State -eq 'Running') { break }
+  }
+  if ([string]$verifiedTask.State -ne 'Running') {
+    throw 'The protected POS maintenance broker task did not start.'
+  }
+  Test-MaintenanceBrokerTask -Task $verifiedTask
+  $pipeReady = $false
+  for ($attempt = 0; $attempt -lt 40; $attempt++) {
+    if (Test-PosMaintenanceBrokerPipe) { $pipeReady = $true; break }
+    Start-Sleep -Milliseconds 250
+  }
+  if (-not $pipeReady) {
+    throw 'The SYSTEM maintenance broker task is running but its protected local pipe did not pass its health check.'
+  }
 }
 
 function Invoke-PreMigrationBackup {
@@ -898,6 +1065,15 @@ try {
     throw 'The selected application installation directory does not exist.'
   }
 
+  $expectedInstallDirectory = Join-Path $env:ProgramW6432 'Koli Wada Dhaba POS'
+  if (-not [string]::Equals(
+    [IO.Path]::GetFullPath($installDirectoryFull).TrimEnd('\'),
+    [IO.Path]::GetFullPath($expectedInstallDirectory).TrimEnd('\'),
+    [StringComparison]::OrdinalIgnoreCase
+  )) {
+    throw 'The protected POS SYSTEM broker requires the standard machine-wide Program Files installation folder. No database or service was changed.'
+  }
+
   # Validate every packaged dependency before changing ProgramData, a service,
   # a scheduled task, or a PostgreSQL cluster.
   $requiredFiles = @(
@@ -912,6 +1088,8 @@ try {
     $tsxCli,
     $seedScript,
     $backupScript,
+    $brokerScript,
+    $restoreScript,
     $powershellExe
   )
   foreach ($requiredFile in $requiredFiles) {
@@ -929,6 +1107,19 @@ try {
   $systemSid = 'S-1-5-18'
   $administratorsSid = 'S-1-5-32-544'
   $serviceSid = "NT SERVICE\$serviceName"
+  $installDirectoryGrants = @(
+    "${systemSid}:(OI)(CI)F",
+    "${administratorsSid}:(OI)(CI)F",
+    'S-1-5-32-545:(OI)(CI)RX'
+  )
+
+  # The privileged scheduled broker must be unable to execute a script or
+  # binary that a standard Windows account can replace. Install only under
+  # Program Files and verify the protected DACL throughout the app tree.
+  Assert-NotReparsePoint -Path $installDirectoryFull -PathType Container
+  Set-DirectoryTreeAcl -Path $installDirectoryFull `
+    -DirectoryGrants $installDirectoryGrants `
+    -FileGrants @("${systemSid}:F", "${administratorsSid}:F", 'S-1-5-32-545:RX')
 
   $appConfigGrants = @(
     "${systemSid}:F",
@@ -960,6 +1151,7 @@ try {
 
   # Reject an unrelated task before performing any database upgrade work.
   Assert-ExistingBackupTaskSafe
+  Assert-ExistingMaintenanceBrokerTaskSafe
 
   $existingService = Get-CimInstance Win32_Service -Filter "Name='$serviceName'" -ErrorAction SilentlyContinue
   $programDataRootExisted = Test-Path -LiteralPath $programDataRoot -PathType Container
@@ -1430,6 +1622,7 @@ try {
   }
 
   Register-AndVerifyBackupTask
+  Register-AndVerifyMaintenanceBrokerTask
 
   # Update marker metadata only after the cluster identity, migrations, master
   # records and scheduled backup task have all been verified.
@@ -1445,6 +1638,7 @@ try {
   Write-Output 'Restaurant master data verified: 70 tables, 13 categories and 120 menu items.'
   Write-Output 'Automatic backup task verified for 01:30 AM local Windows time.'
   Write-Output 'StartWhenAvailable is disabled; a missed backup will not interrupt restaurant operating hours.'
+  Write-Output 'Owner backup/restore broker verified under SYSTEM with a protected local pipe and Program Files ACLs.'
 }
 finally {
   # This outer finally covers initdb success, failure, and timeout, as well as
